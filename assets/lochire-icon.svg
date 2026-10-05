@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 72">
+  <title>LocHire</title>
+  <defs><mask id="pin-cutout"><rect width="64" height="72" fill="white"/><path d="M19 22v22q0 5 5 5h16" fill="none" stroke="black" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></mask></defs>
+  <path d="M32 3C17 3 5 15 5 30c0 19 27 39 27 39s27-20 27-39C59 15 47 3 32 3Z" fill="#153d35" mask="url(#pin-cutout)"/>
+  <circle cx="38" cy="21" r="7" fill="#ccf16b"/>
+  <path d="M31 41v-5a7 7 0 0 1 14 0v5Z" fill="#ccf16b"/>
+</svg>
