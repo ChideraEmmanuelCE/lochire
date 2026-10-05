@@ -22,3 +22,31 @@ html{scroll-padding-top:calc(var(--header-size) + env(safe-area-inset-top,0px) +
 button,input,select,textarea,summary{scroll-margin-top:18px;scroll-margin-bottom:24px}
 @media(max-width:600px){:root{--header-size:75px}.header-inner{padding:0 18px}.bottom-shell{padding-left:12px;padding-right:12px}.bottom-nav{width:100%;padding:7px;border:1px solid var(--line);border-radius:16px}.bottom-nav button{min-height:56px}footer{flex-wrap:nowrap;gap:16px;margin:0}footer button{font-size:10px}}
 @media(max-width:360px){:root{--header-size:69px}.header-inner{padding:0 16px}.bottom-shell{padding-left:10px;padding-right:10px}.bottom-nav{gap:3px}}
+
+
+/* Quiet fixed dock: actions sit lower, with lighter secondary information. */
+:root{--dock-size:98px}
+.bottom-shell{padding-top:4px;background:#fff;border-top-color:#edf1ed}
+.bottom-nav{height:64px;padding:6px;border-color:#e7ece7}
+.bottom-nav button{min-height:50px;font-size:11px;gap:4px}
+footer{height:30px;gap:20px;background:#fff}
+footer button{min-height:30px;font-size:12px;font-weight:400;color:#6f786f;padding:0 8px}
+.nearby-entry{display:flex;gap:20px;align-items:center;padding:26px;margin-bottom:28px;border:1px solid var(--line);border-radius:16px;background:#fff}
+.nearby-entry>span{color:var(--green)}.nearby-entry h2{font-size:21px;margin:0 0 8px}.nearby-entry p{font-size:15px;margin:0;line-height:1.7}.nearby-entry .button{flex-shrink:0}
+.nearby-controls{border:1px solid var(--line);border-radius:16px;padding:20px;background:#fff;margin-bottom:24px}
+.nearby-location{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+#location-status,.location-note{font-size:13px;color:var(--muted);line-height:1.7}.location-error{color:#884538!important}
+.discovery-selects{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.discovery-selects label{display:grid;gap:7px;font-size:14px;color:var(--ink)}
+.discovery-selects select{width:100%;min-height:46px;border:1px solid #dce4dc;border-radius:10px;padding:10px;background:#fff;font:inherit;color:var(--ink)}
+.nearby-options{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:18px;font-size:14px}.nearby-options label{display:flex;gap:8px;align-items:center;min-height:36px}.nearby-options input{width:17px;height:17px;accent-color:var(--green)}
+.location-note{margin:14px 0 0}.worker-rating{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;margin:18px 0;color:var(--ink)}.worker-rating>span:last-child{font-size:12px;color:var(--muted)}.worker-rating.unrated{color:var(--muted);font-size:14px}
+.rating-stars{display:inline-flex;gap:3px;align-items:center;color:#b1842d}.rating-star{display:inline-flex}.rating-star .icon{width:19px;height:19px;stroke-width:1.5}.rating-star.filled .icon{fill:#b1842d}.rating-star.half .icon{fill:#e4c97d}.rating-star .icon path{stroke:#a97c28}
+.distance-badge{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:14px;margin:10px 0;color:var(--green)}.distance-badge span,.distance-badge.muted{font-size:12px;color:var(--muted)}.distance-badge .icon{width:16px;height:16px}
+.booking-availability{font-size:13px!important;color:var(--muted);line-height:1.6}.booking-button{width:100%;margin-top:18px;font-size:14px}.button:disabled{opacity:.55;cursor:not-allowed}
+.rating-overview{display:grid;gap:8px;margin-bottom:22px}.rating-overview .worker-rating{margin:0}.review-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px}.review-heading strong{font-size:15px}.review p{font-size:16px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.review .caption{font-size:13px;line-height:1.7}
+.completed-work-item{padding:20px 0;border-top:1px solid var(--line)}.completed-work-item:first-child{border-top:0;padding-top:8px}.completed-work-item h3{font-size:17px;margin:0 0 10px}.completed-work-item p{font-size:14px;margin:8px 0}.work-history-rating{display:flex;align-items:center;gap:10px;font-size:14px;flex-wrap:wrap}
+.profile-booking-actions{display:grid;gap:12px;margin-top:18px}.profile-booking-actions .button{width:100%;font-size:14px;white-space:normal;text-align:center}
+.worker-location-panel .row-actions{flex-wrap:wrap}.worker-location-panel .check-field{font-size:14px;line-height:1.7}.worker-location-panel p{font-size:15px;line-height:1.8}.booking-worker-summary{border-bottom:1px solid var(--line);padding-bottom:16px}.prepared-email:not(:empty){border-top:1px solid var(--line);margin-top:24px;padding-top:18px}.prepared-email p{font-size:14px;line-height:1.7}
+@media(max-width:800px){.nearby-entry{align-items:flex-start;flex-wrap:wrap}.nearby-entry>div{flex:1;min-width:180px}.nearby-entry>.button{width:100%}}
+@media(max-width:600px){.bottom-nav{height:64px;padding:6px}.bottom-nav button{min-height:50px;font-size:10px}footer{height:30px;gap:18px}footer button{font-size:12px;min-height:30px}.nearby-controls{padding:18px}.nearby-location{align-items:flex-start;flex-direction:column;gap:10px}.nearby-location .button{width:100%}.discovery-selects{grid-template-columns:1fr 1fr;gap:12px}.discovery-selects label:last-child{grid-column:1/-1}.discovery-selects select{font-size:16px}.nearby-options{gap:8px 16px}.nearby-entry{padding:20px;gap:14px}.nearby-entry h2{font-size:19px}.nearby-entry p{font-size:14px}.worker-rating{gap:7px}.review p{font-size:16px}.profile-booking-actions .button{font-size:14px}.worker-location-panel .row-actions .button{width:100%}}

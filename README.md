@@ -48,3 +48,15 @@ The site remains static. `build` checks browser JavaScript syntax and copies onl
 7. A small Lagos pilot to validate categories, local coverage, pay expectations and usability on low-bandwidth phones. Review product policies and applicable requirements with suitable local advisers before collecting real personal information.
 
 No production credentials or secret keys belong in frontend code or this repository.
+
+
+## Ratings, nearby discovery and booking update
+
+- Worker cards and profiles show the average 1–5 star rating and count of eligible completed-engagement reviews. Unrated workers stay unrated. Client names, work descriptions and completed-work history are linked to the engagement record; sample reviews are never invented.
+- Employers can filter by rating, sort by highest rating or nearest distance, and request a one-off booking directly from a profile/card. This creates a pending local request and an opening; the existing acceptance, work-detail confirmation and completion rules still apply.
+- Nearby discovery requests browser GPS only after an explicit action. Radii include 30 m, 100 m, 500 m, 1 km, 5 km and 30 km. Distances display combined accuracy uncertainty. Profiles lacking a recent location are excluded from radius searches. No coordinates are invented for fictional workers.
+- Search position stays in memory, can be cleared and expires after 30 minutes. Optional movement updates stop when leaving discovery or hiding/leaving the page. Worker location snapshots are explicitly shared into local browser storage, removable and expire after 24 hours. Public profile projections exclude coordinates. These distances are approximate snapshots, not background worker tracking or guaranteed live positioning.
+- Worker email sharing is opt-in. Enquiry drafts can be downloaded or opened in the user's mail app; the application never sends mail or invents sample addresses.
+- Fixed bottom actions sit lower above a compact, quieter footer. Existing top navigation stays fixed.
+
+These additions preserve the local-demo boundary. Public reviews across devices, genuine worker availability, delivered booking notifications and automatic emails require authenticated accounts, a shared backend and an email provider.
