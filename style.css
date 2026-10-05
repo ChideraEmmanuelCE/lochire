@@ -5,5 +5,20 @@
 @media(max-width:360px){main{margin-left:16px;margin-right:16px}.header-inner{padding:12px 16px}.hero h1{font-size:31px}.brand{font-size:19px}.mode-button{font-size:9px}.mode-button>.icon:first-child{display:none}.card,.panel{padding:20px}.hero-actions{gap:10px}.hero-actions .button{font-size:12px}.home-categories{gap:8px}.home-categories button{font-size:10px}.modal-body{padding:23px 20px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
-/* The landing page keeps navigation in normal flow so the trust explanation stays unobstructed. */
-.on-home{padding-bottom:30px}.on-home .bottom-nav{position:static;transform:none;margin:0 auto 20px}.on-home #toast{bottom:25px}html{scroll-padding-bottom:130px}button,input,select,textarea{scroll-margin-bottom:130px}
+/* Fixed navigation uses a shared lower dock, with the quiet footer below the main actions. */
+:root{--header-size:81px;--dock-size:124px}
+body{padding-top:calc(var(--header-size) + env(safe-area-inset-top,0px));padding-bottom:calc(var(--dock-size) + env(safe-area-inset-bottom,0px) + 24px)}
+header{position:fixed;top:0;left:0;right:0;z-index:20;height:calc(var(--header-size) + env(safe-area-inset-top,0px));padding-top:env(safe-area-inset-top,0px);background:#fff}
+.header-inner{height:var(--header-size);padding:0 30px}
+.brand,.mode-button{white-space:nowrap}.mode-button{flex-shrink:0}
+.skip-link{position:fixed}
+.bottom-shell{position:fixed;bottom:0;left:0;right:0;z-index:20;padding:8px 18px env(safe-area-inset-bottom,0px);background:#fff;border-top:1px solid var(--line);box-shadow:0 -4px 20px #1d3d2605}
+.bottom-nav{position:relative;left:auto;bottom:auto;transform:none;width:min(550px,100%);height:72px;margin:0 auto;padding:7px;gap:5px;border:1px solid var(--line);border-radius:16px;backdrop-filter:none;background:#fff;box-shadow:none}
+.bottom-nav button{min-height:56px;padding:6px 2px}
+footer{display:flex;align-items:center;justify-content:center;gap:22px;max-width:none;height:44px;margin:0;padding:0;border:0;background:#fff}
+footer button{font-size:11px;font-weight:400;min-height:44px;padding:0 8px;color:var(--muted)}
+#toast{bottom:calc(var(--dock-size) + env(safe-area-inset-bottom,0px) + 16px)}
+html{scroll-padding-top:calc(var(--header-size) + env(safe-area-inset-top,0px) + 18px);scroll-padding-bottom:calc(var(--dock-size) + env(safe-area-inset-bottom,0px) + 24px)}
+button,input,select,textarea,summary{scroll-margin-top:18px;scroll-margin-bottom:24px}
+@media(max-width:600px){:root{--header-size:75px}.header-inner{padding:0 18px}.bottom-shell{padding-left:12px;padding-right:12px}.bottom-nav{width:100%;padding:7px;border:1px solid var(--line);border-radius:16px}.bottom-nav button{min-height:56px}footer{flex-wrap:nowrap;gap:16px;margin:0}footer button{font-size:10px}}
+@media(max-width:360px){:root{--header-size:69px}.header-inner{padding:0 16px}.bottom-shell{padding-left:10px;padding-right:10px}.bottom-nav{gap:3px}}
