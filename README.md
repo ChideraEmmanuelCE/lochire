@@ -1,22 +1,50 @@
 # LocHire
 
-An interactive hackathon prototype for local hiring. Plain HTML, CSS and JavaScript, with no build step. Serve the directory with any static server or deploy it to Vercel (Framework: Other).
+Local hiring for artisans, domestic workers and everyday workers. Built in the existing plain HTML, CSS and JavaScript framework. Production demo: https://lochire.vercel.app/
 
-## Demo journey
-1. Choose an opening or post one with skills, location and salary.
-2. Inspect a candidate's explained match and self-reported work sample.
-3. Create an interview invitation, confirm its time and export a calendar event.
-4. Switch to the candidate view, edit the profile and share it in the demo shortlist.
-5. Explore fictional companies and copy or download an outreach draft.
+## What works
 
-## Limits
-All initial companies, vacancies and candidates are fictional. State is saved only in localStorage on the visitor's device. This is not multi-user authentication, live company outreach, a verified employment service or automated messaging. No third party receives entered data. The Google Fonts stylesheet requests fonts externally; system fonts work when it is unavailable.
+- Short homepage with separate Find work and Hire someone journeys; visible role switching for a person using both roles.
+- Guided worker and employer profiles for individuals, households and businesses. Category-specific driving and live-in/live-out fields, availability, coverage, flexible pricing and optional work examples. Public profile views omit private email and phone fields.
+- Separate guided ongoing-job and one-off-task posting flows, review before saving, optional local task photos, edit, close and reopen.
+- Search and occupation, location, availability, engagement type, experience and rate filters. Suitability explanations compare listed skills, coverage, payment basis, availability and experience; unknowns are explicit. No reliability score or demographic ranking.
+- Employer profiles can be inspected before responding. Ongoing-job interview invitations and task/quote discussions support acceptance, decline, questions and proposed conversation times in WAT.
+- Dedicated engagement records with scope, pay, schedule, dates, general location and accommodation/materials arrangements. Each proposal creates a new version, keeps previous versions and resets both confirmations. Completion requires both parties. Only completed-engagement participants can submit one review each.
+- Local blocking, private report-draft download, privacy, community guidelines and help pages. Native modal dialogs, keyboard focus outlines, reduced-motion support and responsive cards/forms/navigation.
 
-Matching uses skills (60%), compatible city or remote role (25%), and salary ceiling (15%). It does not use age, gender, photographs or protected demographic attributes. Work samples are self-reported. Employers make the invitation decision; the score is not a guarantee of suitability.
+## Honest demo boundaries
 
-A production pilot requires employer and candidate accounts, consent-based outreach, vacancy verification, a shared database, protected contact data, messaging delivery, server validation, and assessment verification.
+The Vercel project had no environment variables, authentication, shared backend or delivery service when inspected. Everything is therefore labelled as a **local demo**. Fictional sample profiles and openings are distinct from the visitor's locally created data. There are no seeded reviews or completed verification badges.
 
-## Local run
-`python3 -m http.server 8080`
+Data is stored under `lochire-local-demo-v3` in browser localStorage. Older prototype entries are not imported. Reset clears current and old demo entries. Use fictional contact information: anyone with access to the same browser can inspect its storage, and there is no authenticated security boundary. Contact fields are omitted from public UI views, but this is not production access control. No private home-address field is collected. Optional photos remain on the device and should not contain private documents.
 
-Open http://localhost:8080. Reset demo restores the initial sample data after confirmation.
+“Preview other party in demo” explicitly simulates the counterpart on the same device; it does not switch authenticated accounts. Messages, invitations, confirmations, reviews and openings are not shared across devices. No email is sent. Conversation times are proposed, not calendar bookings.
+
+Phone, identity, references and business checks all remain **Not checked**. Reporting only downloads a private draft marked **NOT SUBMITTED**; no administrator receives or reviews it. The support action opens the visitor's email client with the project owner's existing contact; delivery or response is not guaranteed. There are no payments, escrow, insurance or legal guarantees.
+
+Business outreach drafts and technology-job samples from the original prototype have been removed from the main experience.
+
+## Development and validation
+
+Node 22.12+ (or current supported Node), Python 3 for optional local serving:
+
+```sh
+npm install
+npm run build
+npm test
+python3 -m http.server 8080
+```
+
+The site is static and does not need a generated build directory. `build` checks browser JavaScript syntax. jsdom is a development-only dependency. Tests cover profile creation and cancellation, both posting flows, editing, opening status, filtering, public contact visibility, invitations, both confirmations, completion/reviews, task quotes, closed-state rules, version changes and nonparticipant access denial. Browser checks separately cover native dialogs, keyboard interaction and responsive layout.
+
+## Required before a real Lagos pilot
+
+1. Authentication with secure sessions and account recovery; one account can own worker and employer profiles.
+2. Persistent shared database and server-side validation/authorization for ownership, conversations, current-version confirmations, completion and review eligibility. Never rely on browser storage or client IDs for privacy.
+3. Consent-based private contact sharing, data retention/deletion controls, secure photo uploads and backups. Keep sensitive fields separate from public profile records.
+4. Server-delivered in-app notifications and a configured email provider with delivery logging, preferences and secrets stored only in server environment variables.
+5. Explicit phone confirmation and optional identity/reference/business-check providers, evidence, consent and audit trails. Present specific completed checks without promising conduct.
+6. A private administrator report inbox/queue, access-controlled review actions, moderation policy and an operational support process; test blocking across authenticated accounts.
+7. A small Lagos pilot to validate categories, local coverage, pay expectations and usability on low-bandwidth phones. Review product policies and applicable requirements with suitable local advisers before collecting real personal information.
+
+No production credentials or secret keys belong in frontend code or this repository.
