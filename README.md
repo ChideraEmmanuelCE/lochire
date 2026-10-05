@@ -35,7 +35,7 @@ npm test
 python3 -m http.server 8080
 ```
 
-The site is static and does not need a generated build directory. `build` checks browser JavaScript syntax. jsdom is a development-only dependency. Tests cover profile creation and cancellation, both posting flows, editing, opening status, filtering, public contact visibility, invitations, both confirmations, completion/reviews, task quotes, closed-state rules, version changes and nonparticipant access denial. Browser checks separately cover native dialogs, keyboard interaction and responsive layout.
+The site remains static. `build` checks browser JavaScript syntax and copies only public app assets plus a responsive test fixture into `dist` for Vercel. Development dependencies and configuration files are excluded. jsdom is a development-only dependency. Tests cover profile creation and cancellation, both posting flows, editing, opening status, filtering, public contact visibility, invitations, both confirmations, completion/reviews, task quotes, closed-state rules, version changes and nonparticipant access denial. Browser checks separately cover native dialogs, keyboard interaction and responsive layout.
 
 ## Required before a real Lagos pilot
 
