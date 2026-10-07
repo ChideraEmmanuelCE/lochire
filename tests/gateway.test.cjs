@@ -16,9 +16,10 @@ beforeEach(() => {
   forwarded = [];
   global.fetch = async (url, options) => {
     forwarded.push({ url: String(url), options });
-    return new Response(JSON.stringify({ ok: true }), {
-      headers: { 'content-type': 'application/json', 'set-cookie': 'lh_session=test; Path=/; HttpOnly; Secure; SameSite=Lax' }
-    });
+    const headers = new Headers({ 'content-type': 'application/json' });
+    headers.append('set-cookie', 'private_host_session=never-forward; Path=/; Secure; HttpOnly');
+    headers.append('set-cookie', 'lh_session=test; Path=/; HttpOnly; Secure; SameSite=Lax');
+    return new Response(JSON.stringify({ ok: true }), { headers });
   };
 });
 afterEach(() => { global.fetch = originalFetch; process.env = originalEnv; });
@@ -46,6 +47,8 @@ test('nested API rewrites preserve auth, job, and receipt routes and private ses
     assert.equal(request.options.headers['x-lochire-service-key'], 'test-service-secret');
     assert.equal(request.options.headers['OAI-Sites-Authorization'], 'Bearer test-private-access');
     assert.match(response.headers['set-cookie'], /HttpOnly/);
+    assert.equal(response.headers['set-cookie'].startsWith('lh_session='), true);
+    assert.equal(response.headers['set-cookie'].includes('private_host_session'), false);
     assert.equal(response.body.includes('test-service-secret'), false);
   }
   await invoke({ url: '/api/gateway?path=auth%2Flogin' });
@@ -63,6 +66,17 @@ test('nested wallet mutations still require the configured app origin', async ()
   const response = await invoke({ method: 'POST', query: { path: ['jobs', 'JOB-demo', 'reserve'] }, headers: { origin }, body: {} });
   assert.equal(response.statusCode, 200);
   assert.equal(forwarded[0].url, 'https://private-service.example.test/api/jobs/JOB-demo/reserve');
+});
+
+test('host-only cookies cannot replace an app session or pass browser cookies to the private host', async () => {
+  global.fetch = async (url, options) => {
+    forwarded.push({ url: String(url), options });
+    return new Response('{}', { headers: { 'content-type': 'application/json', 'set-cookie': 'private_host_session=never-forward; Path=/; Secure; HttpOnly' } });
+  };
+  const response = await invoke({ query: { path: 'wallet' }, headers: { cookie: 'unrelated_cookie=private; lh_session=opaque; another_cookie=private' } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers['set-cookie'], undefined);
+  assert.equal(forwarded[0].options.headers.cookie, 'lh_session=opaque');
 });
 
 test('bank callbacks retain bank authentication through the nested rewrite', async () => {
