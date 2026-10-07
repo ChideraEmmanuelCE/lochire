@@ -55,7 +55,7 @@ flowchart TD
   F --> B
 ```
 
-`api/[...path].js` forwards requests with server-only service credentials. The browser keeps an opaque HttpOnly session cookie. The service authorizes each operation using that session and participant ownership. D1 stores accounts, ledger, jobs, idempotency operations, reviews and bank requests. Bank callbacks enter through Vercel, then undergo bank-specific authentication and independent bank requery.
+`api/gateway.js` forwards requests with server-only service credentials. An explicit Vercel rewrite sends every `/api/:path*` route, including nested authentication, job and webhook paths, to that gateway. The browser keeps an opaque HttpOnly session cookie. The service authorizes each operation using that session and participant ownership. D1 stores accounts, ledger, jobs, idempotency operations, reviews and bank requests. Bank callbacks enter through Vercel, then undergo bank-specific authentication and independent bank requery.
 
 Money is integer **kobo**, with nonnegative database constraints. Money-changing batches atomically check the current job and balance. An idempotency row guards the transaction. Duplicate requests return the existing result or reject changed details instead of moving money again. Concurrent jobs cannot reserve the same funds.
 
@@ -75,7 +75,7 @@ No Wema account number is invented. `LH-…` is an application ID, not a bank ac
 |---|---|
 | `index.html`, `style.css`, `app.js`, `domain.js` | Hiring UI and domain rules |
 | `wallet.js`, `wallet.css` | Account, wallet, payment-job, receipt and bank setup UI |
-| `api/[...path].js` | Server-side Vercel gateway |
+| `api/gateway.js` | Server-side Vercel gateway with explicit nested-route rewrite |
 | `payment-backend/` | Complete private backend source snapshot, schema, migrations and tests |
 | `payment-backend/lib/service.mjs` | Auth, authorization, atomic ledger, jobs, reviews and callbacks |
 | `payment-backend/lib/wema.mjs` | Bank HTTP adapter, verification and encrypted mandates |

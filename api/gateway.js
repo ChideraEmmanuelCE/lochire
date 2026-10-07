@@ -10,6 +10,15 @@ module.exports = async function handler(req,res) {
   if(!base||!service||!bypass)return res.status(503).json({error:'The payment backend is being configured. Please try again shortly.'});
   try {
     const url=new URL(req.url,'https://lochire.vercel.app');
+    // Plain Vercel Functions need an explicit rewrite for nested API paths.
+    // Named rewrite parameters may be supplied in req.query or req.url.
+    if(url.pathname==='/api/gateway') {
+      const captured=req.query?.path??url.searchParams.get('path');
+      const path=Array.isArray(captured)?captured.join('/'):captured;
+      if(typeof path!=='string'||!/^[-A-Za-z0-9_]+(?:\/[-A-Za-z0-9_]+)*$/.test(path))return res.status(400).json({error:'Invalid API route.'});
+      url.pathname='/api/'+path;
+    }
+    url.searchParams.delete('path');
     if(!url.pathname.startsWith('/api/')||url.pathname.includes('..'))return res.status(400).json({error:'Invalid API route.'});
     const origin=process.env.APP_ORIGIN||'https://lochire.vercel.app';
     const webhook=url.pathname.startsWith('/api/webhooks/wema/');

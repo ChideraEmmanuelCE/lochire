@@ -17,8 +17,11 @@
   ],
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/gateway" }
+  ],
   "functions": {
-    "api/[...path].js": {
+    "api/gateway.js": {
       "maxDuration": 60,
       "excludeFiles": "payment-backend/**"
     }
