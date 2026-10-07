@@ -200,3 +200,9 @@ test('worker demo withdrawal preserves retry keys and updates the correct balanc
   form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);assert.equal(JSON.parse(calls[1].body).amount,500000);assert.match(w.document.querySelector('.wallet-bank-balance').textContent,/15,000.00/);assert.match(w.document.querySelector('.wallet-balance h2').textContent,/0.00/);
  }finally{w.close();}
 });
+
+test('worker mode removes funding actions from an existing employer agreement',async()=>{
+ const a=summary();a.wallet.activeRole='worker';a.jobs=[{id:'existing-hiring-job',employer_id:a.user.id,worker_id:'LH-another-worker',title:'Existing hire',scope:'An accepted hiring agreement',amount:10000,status:'accepted',rail:'wema',employer_name:a.user.name,worker_name:'Another worker'}];
+ const w=component(async url=>url.endsWith('/config')?response(config):response(a));
+ try{await w.LocHireWallet.render(w.document.querySelector('main'));assert.match(w.document.querySelector('#wallet-activity-content').textContent,/No deposit is needed/);w.document.querySelector('[data-wallet-action="jobs-tab"]').click();await settle();assert.equal(w.document.querySelector('[data-wallet-action="bank-pay"]'),null);assert.equal(w.document.querySelector('[data-wallet-action="job-reserve"]'),null);assert.match(w.document.querySelector('.wallet-job-list').textContent,/Switch to Hiring to pay/);}finally{w.close();}
+});
