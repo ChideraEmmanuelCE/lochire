@@ -73,8 +73,8 @@ Read [POSTCODE-INTEGRATION.md](docs/POSTCODE-INTEGRATION.md) for the private bac
 
 ## Try Wema demo mode now
 
-1. Create/sign into a LocHire test wallet. Choose **Set up demo wallet**, confirm simulation consent, and complete setup with the displayed public code **123456**. Never enter a real NIN or bank OTP.
-2. Choose **Deposit with Wema** and simulate an amount/result. Successful deposits increase the separate simulated bank balance; pending deposits complete when you check their generated reference; failed deposits add nothing.
+1. Create/sign into a LocHire test wallet. Select **Hiring** for the payer and **Finding work** for the worker. Choose **Set up demo wallet**, confirm simulation consent, and complete setup with the displayed public code **123456**. Never enter a real NIN or bank OTP.
+2. As hirer, choose **Deposit with Wema** and simulate an amount/result. Successful deposits increase the separate simulated bank balance; pending deposits complete when you check their generated reference; failed deposits add nothing.
 3. Both worker and employer complete demo setup. Create a payment agreement with **Simulated Wema wallet** selected, accept as worker, then pay as employer using your LocHire password.
 4. Choose **Check demo payment** to complete the pending payment once. Both parties receive labelled simulated receipts; the worker can then mark work finished and the employer confirm completion.
 5. Request simulated history consent and sync the demo transactions. No ALAT app approval is sent.
