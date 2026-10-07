@@ -18,6 +18,8 @@ function component(fetch) {
   const dom = new JSDOM('<main></main><dialog><div id="dialog-content"></div></dialog>', { url: 'https://lochire.vercel.app/#wallet', runScripts: 'outside-only' });
   const w = dom.window;
   w.fetch = fetch;
+  w.setInterval = (callback, ms) => { w.syncWallet = callback; w.syncInterval = ms; return 1; };
+  w.clearInterval = () => { w.syncStopped = true; };
   w.toast = () => {};
   w.modal = (_title, description, body) => {
     w.document.querySelector('#dialog-content').innerHTML = '<p id="dialog-description"></p>' + body;
@@ -146,5 +148,34 @@ test('demo deposits offer simulated outcomes and send whole kobo with safe retry
  try{
   await w.LocHireWallet.render(w.document.querySelector('main'));w.document.querySelector('[data-wallet-action="wema-deposit"]').click();await settle();assert.match(w.document.querySelector('dialog').textContent,/cannot receive bank transfers/);assert.equal(w.document.querySelector('#wallet-deposit-check'),null);
   const form=w.document.querySelector('#wallet-demo-deposit');form.querySelector('[name="amount"]').value='500';form.querySelector('[name="scenario"]').value='pending';form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);assert.deepEqual(JSON.parse(calls[0].body),{amount:50000,scenario:'pending'});
+ }finally{w.close();}
+});
+
+
+test('background updates refresh received funds, held funds and records without closing forms',async()=>{
+ const a=summary();Object.assign(a.wallet,{bankStatus:'active',bankEnvironment:'demo',accountNumber:'DEMO-FIXTURE',accountName:'Fixture'});a.bankBalance={available:0,held:0,environment:'demo',account:'DEMO-FIXTURE',checkedAt:'2026-10-07T00:00:00Z'};
+ let latest=a,fail=false;const w=component(async url=>url.endsWith('/config')?response({...config,wema:{ready:true,simulated:true,environment:'demo',deposits:{ready:true}}}):fail?response({error:'Unavailable'},503):response(latest));
+ try{
+  await w.LocHireWallet.render(w.document.querySelector('main'));assert.equal(w.syncInterval,30000);
+  w.document.querySelector('[data-wallet-action="wema-deposit"]').click();await settle();const form=w.document.querySelector('#wallet-demo-deposit');form.querySelector('[name="amount"]').value='123';
+  latest={...a,wallet:{...a.wallet,available:75000,held:10000},bankBalance:{...a.bankBalance,available:2000000,held:500000},transactions:[{id:'received',reference:'DEMO-RECEIVED',kind:'bank_received',amount:2000000,status:'successful',description:'Simulated payment',mode:'wema_demo',created_at:'2026-10-07T00:00:00Z'}]};
+  await w.syncWallet();assert.match(w.document.querySelector('.wallet-balance').textContent,/750.00/);assert.match(w.document.querySelector('.wallet-held').textContent,/100.00/);assert.match(w.document.querySelector('.wallet-bank-balance').textContent,/20,000.00/);assert.match(w.document.querySelector('.wallet-bank-balance').textContent,/5,000.00/);assert.match(w.document.querySelector('#wallet-activity-content').textContent,/Simulated payment/);assert.equal(w.document.querySelector('#wallet-demo-deposit'),form);assert.equal(form.querySelector('[name="amount"]').value,'123');
+  fail=true;await w.syncWallet();assert.match(w.document.querySelector('#wallet-sync-status').textContent,/Updates paused/);assert.match(w.document.querySelector('.wallet-bank-balance').textContent,/20,000.00/);
+  fail=false;await w.syncWallet();assert.match(w.document.querySelector('#wallet-sync-status').textContent,/automatically/);
+  w.location.hash='#home';await settle();assert.equal(w.syncStopped,true);
+ }finally{w.close();}
+});
+
+test('an earlier background response cannot replace a newer deposit balance',async()=>{
+ let reads=0,resolveOld;const w=component(async(url)=>{
+  if(url.endsWith('/config'))return response(config);
+  if(url.endsWith('/wallet')){if(++reads===1)return response(summary());return new Promise(resolve=>{resolveOld=resolve;});}
+  if(url.endsWith('/sandbox/fund'))return response({...summary(),wallet:{...summary().wallet,available:5000000}});
+  throw Error(url);
+ });
+ try{
+  await w.LocHireWallet.render(w.document.querySelector('main'));const oldRefresh=w.syncWallet();await settle();
+  w.document.querySelector('[data-wallet-action="deposit"]').click();await settle();w.document.querySelector('[data-wallet-action="fund"]').click();await settle();w.document.querySelector('#wallet-fund').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();
+  assert.match(w.document.querySelector('.wallet-balance').textContent,/50,000.00/);resolveOld(response(summary()));await oldRefresh;assert.match(w.document.querySelector('.wallet-balance').textContent,/50,000.00/);
  }finally{w.close();}
 });

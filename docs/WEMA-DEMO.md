@@ -23,3 +23,7 @@ Use `WEMA_MODE=demo`, `PAYMENT_MODE=sandbox`, `WEMA_ENABLED=false`, and a non-pr
 ## Connect the actual bank later
 
 Set `WEMA_MODE=bank`, configure approved Wema sandbox credentials/products and mappings, and activate the provider only after contract testing. Complete actual bank onboarding; the DEMO ID is never reused as a bank number. Create new sandbox-bank payment agreements. Demo balances/history remain simulated and never convert into Wema money. See WEMA-INTEGRATION.md and DEPOSIT-FLOW.md.
+
+## Balance updates
+
+Each completed action immediately updates the acting user's dashboard. Open wallet screens fetch saved balances, held funds, deposits, payment jobs and receipts every 30 seconds, and refresh when you return to the tab. This lets a worker see a payment from an employer without manually reloading. Hidden tabs and signed-out sessions do not poll. A failed refresh retains the last saved balances and shows an update warning; it never guesses an amount. Background refreshes cannot overwrite a newer payment response or close a payment form. Simulated Wema balances remain separate from ordinary test-job funds. Actual bank balances are timestamped snapshots and still require the bank balance refresh action.

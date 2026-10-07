@@ -156,3 +156,7 @@ Tests cover the existing hiring journeys plus payment ownership, insufficient fu
 This is ready for a **test-money hackathon demonstration**, not a real-money pilot. Test email/phone confirmation and password recovery are not connected. Hiring listings/messages and identity/reference checks retain their local-demo boundaries. Disputes have no operational resolution queue. Bank-confirmed reversals, custody approval, support and bank production authorization are needed before offering those services.
 
 Never print or commit secrets, passwords, NIN, OTP, bank payloads or session cookies.
+
+### Keeping balances current
+
+Wallet actions immediately update the dashboard. While an authenticated wallet is visible, balances, pending funds and payment records refresh every 30 seconds and on return to the tab. Both participants receive updates from saved server records. Failed updates keep the last saved balance with a warning. See [Wema demo balance updates](docs/WEMA-DEMO.md#balance-updates).

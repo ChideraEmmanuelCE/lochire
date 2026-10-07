@@ -9,7 +9,32 @@ window.LocHireWallet = (() => {
   const date=s=>new Date(s).toLocaleString('en-NG',{timeZone:'Africa/Lagos',dateStyle:'medium',timeStyle:'short'});
   const control=(label,action,extra='',primary=false)=>`<button type="button" class="button ${primary?'primary':'secondary'}" data-wallet-action="${action}" ${extra}>${label}</button>`;
   let host=null,account=null,config=null,view='transactions',generation=0,draft=null,historyFilter='all',moneyRail='all',lastError='';
+  let syncTimer=null,syncing=false,mutations=0,revision=0,syncFailed=false;
+  const walletVisible=()=>account&&host?.isConnected&&location.hash.startsWith('#wallet')&&document.visibilityState!=='hidden';
+  function syncNotice(){const node=document.querySelector('#wallet-sync-status');if(node)node.textContent=syncFailed?'Updates paused. Showing the last saved balances; use Refresh to retry.':'Balances and payment records update automatically every 30 seconds.';}
+  function startSync(){if(syncTimer===null)syncTimer=setInterval(syncAccount,30000);}
+  function stopSync(){if(syncTimer!==null)clearInterval(syncTimer);syncTimer=null;}
+  async function syncAccount(){
+    if(!walletVisible()||syncing||mutations)return;
+    syncing=true;const ticket=generation,version=revision,userId=account.user.id;
+    try{
+      const latest=await api('wallet');
+      if(!walletVisible()||ticket!==generation||version!==revision||mutations||account.user.id!==userId)return;
+      syncFailed=false;
+      // Keep an open payment form and its retry key intact while updating the dashboard.
+      if(JSON.stringify(latest)!==JSON.stringify(account)){account=latest;draw();}else syncNotice();
+    }catch(error){
+      if(ticket!==generation||version!==revision||!walletVisible())return;
+      if(error.status===401){account=null;stopSync();entry();}
+      else{syncFailed=true;syncNotice();}
+    }finally{syncing=false;}
+  }
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='hidden')syncAccount();});
+  window.addEventListener('focus',syncAccount);
+  window.addEventListener('hashchange',()=>{if(!location.hash.startsWith('#wallet')){++generation;stopSync();}});
   async function api(path,body,key) {
+    const mutation=body!==undefined;if(mutation){++revision;++mutations;}
+    try{
     const headers={'Accept':'application/json'};
     if(body!==undefined)headers['Content-Type']='application/json';
     if(key)headers['Idempotency-Key']=key;
@@ -17,6 +42,7 @@ window.LocHireWallet = (() => {
     let data;try{data=await response.json();}catch{throw Error('The payment service is unavailable. Please try again.');}
     if(!response.ok){const error=Error(data.error||'The request could not be completed.');error.status=response.status;throw error;}
     return data;
+    }finally{if(mutation)--mutations;}
   }
   const requestKey=()=>crypto.randomUUID();
   function formField(name,label,type='text',extra='',value='') {return `<div class="field"><label for="wallet-${name}">${label}</label><input id="wallet-${name}" name="${name}" type="${type}" value="${safe(value)}" ${extra}></div>`;}
@@ -25,7 +51,7 @@ window.LocHireWallet = (() => {
   function closeDialog(){document.querySelector('dialog').close();}
   function errorMessage(message) {const node=document.querySelector('.wallet-form-error');if(node){node.textContent=message;node.focus();}else toast(message);}
   async function render(target) {
-    host=target;const ticket=++generation;
+    stopSync();syncFailed=false;host=target;const ticket=++generation;
     host.innerHTML='<section class="wallet-loading" role="status"><span class="wallet-mark">'+svg('wallet')+'</span><h1>Your LocHire wallet.</h1><p>Connecting to your payment account…</p></section>';
     try {
       const results=await Promise.allSettled([api('config'),api('wallet')]);
@@ -50,8 +76,10 @@ window.LocHireWallet = (() => {
   }
   function draw() {
     if(!account){entry();return;}
+    startSync();
     const {user,wallet,trust}=account,employer=['employer','both'].includes(user.role);
     host.innerHTML=`<section class="page-top wallet-heading"><div><div class="eyebrow">YOUR LOCHIRE WALLET</div><h1>Your work. Your money.</h1><p>Welcome, ${safe(user.name)}. Every job has a payment record.</p></div><div class="row-actions">${control(svg('clock')+' Refresh','refresh')}${control(svg('logout')+' Sign out','logout')}</div></section><div class="wallet-test-line">${svg('shield')}<span><strong>Test wallet.</strong> ${simulated()?'Wema demo is enabled. All accounts and bank activity are simulated; no Wema API is contacted.':config?.wema?.ready?'This balance uses test money. Wema payments have separate bank receipts.':'Balances and transfers use test money. Wema is awaiting connection.'}</span></div><div class="wallet-dashboard"><div class="wallet-main-column"><section class="wallet-balance"><div class="wallet-card-top"><span>${svg('wallet')} LocHire wallet</span><span class="wallet-test-chip">TEST MONEY</span></div><p>Available balance</p><h2>${cash(wallet.available)}</h2><div class="wallet-held"><span>Reserved for jobs</span><strong>${cash(wallet.held)}</strong></div><div class="wallet-balance-actions">${control(svg('plus')+' Add money','deposit','',true)}${employer?control('Create payment job '+svg('arrow'),'new-job'):control('View payment jobs','jobs-tab')}</div><div class="wallet-id"><span>Your wallet ID <small>Share this ID with the other party.</small></span><button type="button" data-wallet-action="copy-id" aria-label="Copy wallet ID">${svg('copy')}</button><code>${safe(user.id)}</code></div></section><section class="wallet-activity panel"><div class="wallet-section-top"><h2>Payment activity</h2><span class="wallet-currency">Test funds & bank receipts</span></div><div class="wallet-tabs" role="group" aria-label="Wallet view">${control(svg('receipt')+' Transactions','transactions-tab',`aria-pressed="${view==='transactions'}"`,view==='transactions')}${control(svg('bank')+' Deposits','deposits-tab',`aria-pressed="${view==='deposits'}"`,view==='deposits')}${control(svg('wallet')+' Payment jobs','jobs-tab',`aria-pressed="${view==='jobs'}"`,view==='jobs')}</div><div id="wallet-activity-content">${view==='jobs'?jobsMarkup():view==='deposits'?depositsMarkup():transactionsMarkup()}</div></section></div><aside class="wallet-side-column">${bankCard()}<section class="wallet-trust-card panel"><span class="wallet-small-icon">${svg('star')}</span><h2>A work history with evidence.</h2><div class="wallet-trust-grid"><div><strong>${trust.completedJobs}</strong><span>Completed payment jobs</span></div><div><strong>${trust.rating===null?'—':trust.rating+' / 5'}</strong><span>${trust.reviews} participant ${trust.reviews===1?'review':'reviews'}</span></div></div><p class="caption">${trust.positivePercent===null?'No review percentage until reviews exist.':trust.positivePercent+'% positive reviews (4–5 stars), from '+trust.reviews+' '+(trust.reviews===1?'review':'reviews')+'.'} Test activity is labelled. A Wema account verifies bank setup; it does not guarantee reliability.</p></section><section class="wallet-how panel"><h2>How a payment moves</h2><div><span>1</span><p>Agree the job and price</p></div><div><span>2</span><p>Worker accepts; employer reserves test funds</p></div><div><span>3</span><p>Both confirm work is completed</p></div><div><span>4</span><p>Worker receives payment and a receipt</p></div><p class="caption">This tests reserved funds. Any real holding or escrow arrangement needs Wema’s approval.</p></section></aside></div>`;
+    const syncStatus=document.createElement('p');syncStatus.id='wallet-sync-status';syncStatus.className='caption';syncStatus.setAttribute('role','status');host.querySelector('.wallet-heading').append(syncStatus);syncNotice();
   }
   function transactionsMarkup() {
     const list=account.transactions.filter(t=>moneyRail==='all'||(moneyRail==='test'?t.mode==='sandbox':t.mode!=='sandbox')).filter(t=>historyFilter==='all'||(historyFilter==='in'?t.amount>0:t.amount<0));
@@ -148,7 +176,7 @@ window.LocHireWallet = (() => {
       else if(action==='new-job')newJobForm();
       else if(action==='transactions-tab'||action==='jobs-tab'||action==='deposits-tab'){view=action==='jobs-tab'?'jobs':action==='deposits-tab'?'deposits':'transactions';draw();}
       else if(action==='copy-id'){await navigator.clipboard.writeText(account.user.id);toast('Wallet ID copied.');}
-      else if(action==='logout'){await api('auth/logout',{});account=null;entry();}
+      else if(action==='logout'){await api('auth/logout',{});account=null;stopSync();entry();}
       else if(action==='bank-pay'){const job=account.jobs.find(j=>j.id===button.dataset.id);showDialog('Pay worker through Wema.',simulated()?'This moves simulated funds between demo wallets only. No Wema API or real money is involved.':config.wema.environment==='production'?'This requests a real transfer from your confirmed Wema wallet to the worker’s confirmed Wema wallet.':'This uses Wema’s sandbox. No real money is transferred.',`<div class="wallet-confirm-job"><strong>${safe(job.title)}</strong><span>${cash(job.amount)} · ${safe(job.worker_name)}</span></div><form id="wallet-bank-pay" data-id="${safe(job.id)}">${formField('password','Confirm your password','password','required autocomplete="current-password"')}${formError()}<button class="button primary" type="submit">Request Wema payment</button></form>`);}else if(action==='bank-reconcile'){const payment=account.bankPayments.find(p=>p.job_id===button.dataset.id);if(!payment)throw Error('Refresh to find this payment reference.');await api('wema/payments/reconcile',{reference:payment.reference},requestKey());account=await api('wallet');draw();toast('Bank status checked.');}else if(action.startsWith('job-'))actionConfirm(button.dataset.id,action.slice(4));
       else if(action==='receipt')await receipt(button.dataset.ref);
       else if(action==='download-receipt'){const data=await api('receipts/'+encodeURIComponent(button.dataset.ref));download('LocHire-'+(data.currency==='NGN'?'Wema':'Test')+'-Receipt-'+data.transaction.reference+'.txt',data.label+'\n\n'+data.transaction.description+'\nAmount: '+cash(Math.abs(data.transaction.amount))+'\nReference: '+data.transaction.reference+'\nDate: '+date(data.transaction.created_at)+' WAT\nStatus: '+data.transaction.status+'\nIssued to: '+data.issuedTo+'\nCurrency: '+data.currency+(data.deposit?'\nBank reference: '+data.deposit.reference+'\nWema account: '+data.deposit.account:'')+'\n\n'+(data.currency==='NGN'?'Bank-confirmed transfer.':'No real bank transfer was made.'));}
