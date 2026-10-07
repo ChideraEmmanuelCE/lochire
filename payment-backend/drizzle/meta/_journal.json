@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1791346553747,
+      "tag": "0000_smiling_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791346688070,
+      "tag": "0001_adorable_mikhail_rasputin",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791347210237,
+      "tag": "0002_first_wrecking_crew",
+      "breakpoints": true
+    }
+  ]
+}

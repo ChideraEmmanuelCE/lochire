@@ -1,0 +1,1 @@
+ALTER TABLE `bank_requests` ADD `environment` text DEFAULT 'sandbox' NOT NULL;

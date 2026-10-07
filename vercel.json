@@ -16,5 +16,11 @@
     }
   ],
   "buildCommand": "npm run build",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "functions": {
+    "api/[...path].js": {
+      "maxDuration": 60,
+      "excludeFiles": "payment-backend/**"
+    }
+  }
 }
