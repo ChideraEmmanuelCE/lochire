@@ -1,0 +1,1 @@
+ALTER TABLE `payment_jobs` ADD `bank_environment` text;

@@ -34,7 +34,7 @@ export const jobs = sqliteTable('payment_jobs', {
   workerId: text('worker_id').notNull().references(() => users.id),
   title: text('title').notNull(), scope: text('scope').notNull(), category: text('category').notNull(),
   amount: integer('amount').notNull(), status: text('status').notNull().default('invited'),
-  rail: text('rail').notNull().default('sandbox'),
+  rail: text('rail').notNull().default('sandbox'), bankEnvironment:text('bank_environment'),
   employerDone: integer('employer_done').notNull().default(0),
   workerDone: integer('worker_done').notNull().default(0),
   disputeReason: text('dispute_reason'), createdAt: text('created_at').notNull(), completedAt: text('completed_at'),
@@ -77,3 +77,7 @@ export const bankEvents = sqliteTable('bank_events', {
 export const rateLimits = sqliteTable('rate_limits', {
   key: text('key').primaryKey(), attempts: integer('attempts').notNull(), expiresAt: integer('expires_at').notNull(),
 });
+
+export const demoBankBalances = sqliteTable('demo_bank_balances', {
+ userId:text('user_id').primaryKey().references(()=>users.id),available:integer('available').notNull().default(0),held:integer('held').notNull().default(0),
+},t=>[check('demo_bank_nonnegative',sql`${t.available} >= 0 AND ${t.held} >= 0`)]);

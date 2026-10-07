@@ -6,7 +6,7 @@
 
 **Wallet:** https://lochire.vercel.app/#wallet
 
-The wallet is a working, authenticated **test-money** application with persistent server records. Wema account creation and real bank transfers remain disabled until Wema provides approved product access, credentials and verified request/callback contracts. Test balances are never real bank balances.
+The wallet is a working, authenticated **test-money** application with persistent server records. **Complete Wema demo mode is enabled**: simulated account setup, deposits, balances, worker transfers, history consent and receipts work without bank credentials. No Wema API is called. Wema account creation and real bank transfers remain disabled until Wema provides approved product access, credentials and verified request/callback contracts. Test balances are never real bank balances.
 
 ## What is ready
 
@@ -71,9 +71,19 @@ When a NIPOST key is configured, sign into the LocHire wallet, consent to sendin
 
 Read [POSTCODE-INTEGRATION.md](docs/POSTCODE-INTEGRATION.md) for the private backend variables, access levels, official sandbox examples, privacy rules, activation steps and judge walkthrough. As with Wema, secret provider keys never enter the browser or GitHub. Local hiring examples still have their documented localStorage limitations.
 
+## Try Wema demo mode now
+
+1. Create/sign into a LocHire test wallet. Choose **Set up demo wallet**, confirm simulation consent, and complete setup with the displayed public code **123456**. Never enter a real NIN or bank OTP.
+2. Choose **Deposit with Wema** and simulate an amount/result. Successful deposits increase the separate simulated bank balance; pending deposits complete when you check their generated reference; failed deposits add nothing.
+3. Both worker and employer complete demo setup. Create a payment agreement with **Simulated Wema wallet** selected, accept as worker, then pay as employer using your LocHire password.
+4. Choose **Check demo payment** to complete the pending payment once. Both parties receive labelled simulated receipts; the worker can then mark work finished and the employer confirm completion.
+5. Request simulated history consent and sync the demo transactions. No ALAT app approval is sent.
+
+`DEMO-…` is a non-routing simulation ID, not a bank account number. Do not attempt a real bank transfer to it. Demo balances, ordinary test-job balances, Wema sandbox records and production money remain distinct. Demo agreements cannot spend live funds when switching modes. See [WEMA-DEMO.md](docs/WEMA-DEMO.md).
+
 ## Deposit flow
 
-Choose **Wallet → Add money**. **Add test funds** creates fictional funds, capped at ₦100,000 per rolling 24 hours, without charging a bank or card. Retries of the same amount reuse a request key, and fractional kobo are rejected.
+In bank mode, choose **Wallet → Add money**. The active demo mode simulates this journey without external bank calls. **Add test funds** creates fictional funds, capped at ₦100,000 per rolling 24 hours, without charging a bank or card. Retries of the same amount reuse a request key, and fractional kobo are rejected.
 
 **Deposit with Wema** is prepared as a bank transfer into the user's own bank-confirmed Wema wallet: verify the account → transfer using a banking app → receive a bank notification or check the transfer reference → independently verify with Wema → save one deposit receipt. Pending/unknown/failed checks cannot create a successful deposit record. Do not send a second transfer just because the first is pending. The sending bank determines its fees and timing.
 
@@ -102,6 +112,7 @@ No Wema account number is invented. `LH-…` is an application ID, not a bank ac
 | `payment-backend/` | Complete private backend source snapshot, schema, migrations and tests |
 | `payment-backend/lib/service.mjs` | Auth, authorization, atomic ledger, jobs, reviews and callbacks |
 | `payment-backend/lib/wema.mjs` | Bank HTTP adapter, verification and encrypted mandates |
+| `payment-backend/lib/wema-demo.mjs`, `bank-mode.mjs` | Isolated Wema simulation and fail-closed mode selection |
 | `payment-backend/lib/deposits.mjs` | Wema credit requery, account/environment matching, duplicate-safe deposit receipts and bank balance snapshots |
 | `payment-backend/lib/postcode.mjs` | NIPOST lookup adapter, signed location confirmations and participant visibility rules |
 | `payment-backend/db/schema.ts`, `payment-backend/drizzle/` | Database schema and migrations |

@@ -74,3 +74,11 @@ Job summaries return `location: null` when none was attached. An invited or decl
 Amounts in `bankDeposits` and `bankBalance` are integer kobo. Deposits have `reference`, `status` (`pending`, `unknown`, `failed`, `successful`), nullable `amount`, `environment`, `receipt_reference`, `created_at`, and `verified_at`. A user-submitted reference/amount never establishes a successful deposit. Completed deposit receipts include a `deposit` projection with the original bank reference and account. The same reference has one receipt per verified account/environment; callbacks can confirm a deposit even if the user never entered a reference.
 
 `bankBalance` is null until the first successful read. Its `available`, `account`, `currency`, `environment`, and `checkedAt` come from a verified bank read-back. Deposit history does not update `wallet.available` or `wallet.held`. A failed balance request returns 502 and preserves the prior snapshot/timestamp; it never reports zero as a substitute. No outbound transfer is submitted by a deposit check.
+
+## Wema simulation
+
+`/config` reports `wema.simulated=true`, `environment=demo`, and ready demo deposit features when `WEMA_MODE=demo`, `PAYMENT_MODE=sandbox`, `WEMA_ENABLED` is false, and the configured bank environment is not production. Conflicting live flags disable simulation. Provider credentials never turn simulation into a bank request.
+
+Demo setup uses the existing onboarding routes: request with `consent:true` **without NIN**; verify with public code `123456`. `POST /wema/demo/deposits/create` takes integer-kobo `amount` and `scenario` (`successful`, `pending`, `failed`) plus Idempotency-Key. The same saved reference/check settles a pending deposit once. Accounts/balances/deposits use environment `demo`; transactions/receipts use `wema_demo` and TEST-NGN. Existing Wema payment routes simulate guarded transfers between demo wallets, reserve pending amounts and settle on reconciliation. Statement consent/history are simulated. All real bank callback routes are disabled.
+
+`payment_jobs.bank_environment` records the creation environment; a demo agreement cannot be used for a bank transfer. `demo_bank_balances` keeps isolated available/held balances. No demo account ID is a ten-digit bank account number. Actual bank setup must be completed separately after selecting bank mode.

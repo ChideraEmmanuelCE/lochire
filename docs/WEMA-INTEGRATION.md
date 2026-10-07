@@ -1,6 +1,6 @@
 # LocHire + Wema: integration guide
 
-The published app has a persistent **test wallet**. Real Wema accounts and transfers are disabled until Wema supplies credentials and confirms the subscribed API contracts. A test balance is never converted to real naira.
+The published app has a persistent **test wallet** and an active [complete Wema simulation](WEMA-DEMO.md). Simulation makes no bank requests. Set `WEMA_MODE=bank` to use the actual provider adapter, after approved configuration. Real Wema accounts and transfers are disabled until Wema supplies credentials and confirms the subscribed API contracts. A test balance is never converted to real naira.
 
 ## Product approach
 
@@ -40,6 +40,7 @@ Set bank values in the **private payment backend**, not in the Vercel frontend b
 
 | Variable | Purpose |
 |---|---|
+| `WEMA_MODE` | Currently `demo`; choose `bank` when connecting actual Wema sandbox/production contracts |
 | `WEMA_ENABLED` | Keep `false` until bank sandbox testing is complete |
 | `WEMA_ENVIRONMENT` | `sandbox` for bank testing, `production` only for approved live access; bank sandbox receipts stay marked test |
 | `WEMA_BASE_URL` | Bank-issued HTTPS API origin/base path |

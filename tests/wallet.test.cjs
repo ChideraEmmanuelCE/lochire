@@ -130,3 +130,21 @@ test('test deposit validation rejects fractional kobo and changed amounts use a 
   input.value='1.01';f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();input.value='2.02';f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.equal(posts.length,2);assert.notEqual(posts[0].headers['Idempotency-Key'],posts[1].headers['Idempotency-Key']);assert.equal(JSON.parse(posts[1].body).amount,202);
  }finally{w.close();}
 });
+
+test('simulated Wema setup never collects a real NIN or describes an actual bank OTP',async()=>{
+ const a=summary(),c={...config,wema:{ready:true,simulated:true,environment:'demo',deposits:{ready:true,simulated:true}}};let request;
+ const w=component(async(url,req)=>{if(url.endsWith('/config'))return response(c);if(url.endsWith('/wallet'))return response(a);if(url.endsWith('/onboarding/request')){request=JSON.parse(req.body);a.wallet.bankStatus='otp_required';a.wallet.bankEnvironment='demo';return response({status:'otp_required',message:'Demo only'});}throw Error(url);});
+ try{
+  await w.LocHireWallet.render(w.document.querySelector('main'));w.document.querySelector('[data-wallet-action="wema-setup"]').click();await settle();assert.equal(w.document.querySelector('[name="nin"]'),null);assert.match(w.document.querySelector('dialog').textContent,/not Wema bank verification/);
+  const form=w.document.querySelector('#wallet-wema-request');form.querySelector('[name="consent"]').checked=true;form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();await settle();assert.equal(request.nin,undefined);assert.equal(request.consent,true);assert.equal(w.document.querySelector('[name="otp"]').value,'123456');assert.match(w.document.querySelector('#dialog-description').textContent,/No SMS was sent/);
+ }finally{w.close();}
+});
+
+test('demo deposits offer simulated outcomes and send whole kobo with safe retry keys',async()=>{
+ const a=summary();Object.assign(a.wallet,{bankStatus:'active',bankEnvironment:'demo',accountNumber:'DEMO-FIXTURE',accountName:'Fixture · Demo'});a.bankBalance={available:0,held:0,environment:'demo',account:'DEMO-FIXTURE',checkedAt:'2026-10-07T00:00:00Z'};const c={...config,wema:{ready:true,simulated:true,environment:'demo',deposits:{ready:true,simulated:true}}},calls=[];
+ const w=component(async(url,req)=>{if(url.endsWith('/config'))return response(c);if(url.endsWith('/wallet'))return response(a);calls.push(req);return response({error:'Temporary demo failure'},502);});
+ try{
+  await w.LocHireWallet.render(w.document.querySelector('main'));w.document.querySelector('[data-wallet-action="wema-deposit"]').click();await settle();assert.match(w.document.querySelector('dialog').textContent,/cannot receive bank transfers/);assert.equal(w.document.querySelector('#wallet-deposit-check'),null);
+  const form=w.document.querySelector('#wallet-demo-deposit');form.querySelector('[name="amount"]').value='500';form.querySelector('[name="scenario"]').value='pending';form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);assert.deepEqual(JSON.parse(calls[0].body),{amount:50000,scenario:'pending'});
+ }finally{w.close();}
+});

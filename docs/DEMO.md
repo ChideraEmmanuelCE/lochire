@@ -39,3 +39,7 @@ Pitch: LocHire connects nearby workers, clarifies where the work happens using N
 Open Wallet → **How deposits work** before signing in, or **Add money** after signing in. Explain the two choices: fictional test top-ups, and transfers into the user's own Wema wallet. Open **See Wema deposit flow** to show the four steps and the disconnected state. No account number is fabricated.
 
 With approved Wema sandbox configuration, demonstrate account setup, copying a confirmed sandbox account, a bank-provided test credit notification, pending reference checks, duplicate notifications, one receipt and a timestamped bank balance. Do not send real money during a sandbox demonstration. The deposit is held by Wema; it is not LocHire escrow or test-wallet credit. See DEPOSIT-FLOW.md for the full activation sequence.
+
+## Complete Wema simulation (available now)
+
+Use Wallet → Set up demo wallet → consent → displayed code **123456**. Simulate a ₦50,000 deposit. Use a second worker account with its own demo setup, create a ₦20,000 **Simulated Wema wallet** agreement, accept it as worker, pay as employer, then **Check demo payment**. Show the worker's simulated balance/receipt and both-sided work completion. Also demonstrate a pending deposit completing once and a failed deposit adding no funds. Explain clearly that this is LocHire's simulation, not a connection to Wema's actual sandbox.

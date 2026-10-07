@@ -155,8 +155,8 @@ test('bank verification rejects mismatched amounts and accounts; mandate cannot 
 test('Wema adapter flow persists before submission, verifies callbacks once, and keeps bank sandbox separate',async()=>{
   const h=harness(),e=await h.register('bankpayer'),w=await h.register('bankworker');
   Object.assign(h.env,{WEMA_ENABLED:'true',WEMA_ENVIRONMENT:'sandbox',WEMA_BASE_URL:'https://api.alat.ng',WEMA_API_KEY:'fixture-key',WEMA_CHANNEL_ID:'fixture-channel',WEMA_CALLBACK_TOKEN:'fixture-callback',WEMA_MANDATE_KEY:'b'.repeat(64),WEMA_WALLET_VERIFY_PATH:'/verify/{trackingId}',WEMA_TRANSFER_STATUS_PATH:'/status/{reference}',WEMA_CONTRACT_CONFIRMED:'true'});
-  await h.db.prepare("UPDATE wallets SET bank_status='active',bank_account=?,bank_name=? WHERE user_id=?").bind('0000000001','Bank Payer',e.id).run();
-  await h.db.prepare("UPDATE wallets SET bank_status='active',bank_account=?,bank_name=? WHERE user_id=?").bind('0000000002','Bank Worker',w.id).run();
+  await h.db.prepare("UPDATE wallets SET bank_status='active',bank_environment='sandbox',bank_account=?,bank_name=? WHERE user_id=?").bind('0000000001','Bank Payer',e.id).run();
+  await h.db.prepare("UPDATE wallets SET bank_status='active',bank_environment='sandbox',bank_account=?,bank_name=? WHERE user_id=?").bind('0000000002','Bank Worker',w.id).run();
   await h.call('sandbox/fund',{amount:5000000},e.cookie,'initial-test-credit');
   const created=await h.call('jobs',{workerId:w.id,title:'Bank adapter plumbing job',scope:'A confirmed job for the bank adapter fixture.',category:'Plumbing',amount:2000000,rail:'wema'},e.cookie,'create-bank-job');
   const job=created.data.jobs[0].id;await h.call('jobs/'+job+'/accept',{},w.cookie,'accept-bank-job');

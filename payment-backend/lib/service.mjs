@@ -1,3 +1,5 @@
+import { demoMode } from './bank-mode.mjs';
+import { DemoBankError, demoBank } from './wema-demo.mjs';
 import { DepositError, depositReadiness, depositSummary, depositAction, depositCallback } from './deposits.mjs';
 import { WemaProvider, bankReadiness, authorizeMandate } from './wema.mjs';
 import { PostcodeError, postcodeReadiness, lookupPostcode, jobLocation, locationForParticipant } from './postcode.mjs';
@@ -100,14 +102,14 @@ async function sandboxAction(db,user,request,body,path,env) {
   if(path==='jobs') {
     if(!['employer','both'].includes(user.role))fail(403,'Only an employer account can create a payment job.');
     const title=clean(body.title,'job title',100),scope=clean(body.scope,'scope',1500,5),category=clean(body.category,'category',70),n=amount(body.amount);
-    const rail=body.rail==='wema'?'wema':'sandbox';
+    const rail=body.rail==='wema'?'wema':'sandbox',bankEnvironment=rail==='wema'?bankReadiness(env).environment:null;
     if(rail==='wema'&&!bankReadiness(env).ready)fail(503,'Wema is not connected. Use a test payment agreement.');
     const worker=await first(db,"SELECT id FROM users WHERE id=? AND role IN ('worker','both')",clean(body.workerId,'worker wallet ID',60));
     if(!worker||worker.id===user.id)fail(400,'Use a different registered worker’s wallet ID.');
     const jobId=uid('JOB');
     const location=await jobLocation(body,env,user.id);
-    await transact(db,user,request,'create_job',{title,scope,category,amount:n,workerId:worker.id,rail,location},'1=1',[],[
-      ({id,at,opCondition})=>[`INSERT INTO payment_jobs (id,employer_id,worker_id,title,scope,category,amount,status,rail,created_at) SELECT ?,?,?,?,?,?,?,'invited',?,? WHERE ${opCondition}`,[jobId,user.id,worker.id,title,scope,category,n,rail,at,id]]
+    await transact(db,user,request,'create_job',{title,scope,category,amount:n,workerId:worker.id,rail,bankEnvironment,location},'1=1',[],[
+      ({id,at,opCondition})=>[`INSERT INTO payment_jobs (id,employer_id,worker_id,title,scope,category,amount,status,rail,bank_environment,created_at) SELECT ?,?,?,?,?,?,?,'invited',?,?,? WHERE ${opCondition}`,[jobId,user.id,worker.id,title,scope,category,n,rail,bankEnvironment,at,id]]
       ,...(location?[({id,opCondition})=>[`INSERT INTO job_locations (job_id,postcode,status,environment,administrative,address,checked_at) SELECT ?,?,?,?,?,?,? WHERE ${opCondition}`,[jobId,location.postcode,location.status,location.environment,location.administrative?JSON.stringify(location.administrative):null,location.address,location.checkedAt,id]]]:[])
     ]);
     return summary(db,user);
@@ -161,15 +163,21 @@ async function sandboxAction(db,user,request,body,path,env) {
 async function handleBank(db,user,request,body,path,env) {
   const readiness=bankReadiness(env);
   if(!readiness.ready)fail(503,'Wema is not connected yet. The test wallet remains available.');
+  if(demoMode(env)){
+    await limit(db,`demo-bank:${user.id}`,30);
+    if(path==='wema/payments/create'&&(typeof body.password!=='string'||!equal(await passwordHash(body.password,user.password_salt),user.password_hash)))fail(401,'Confirm your LocHire password for the simulated payment.');
+    const result=await demoBank(db,user,request,body,path,env,transact);return {...result,...await summary(db,user)};
+  }
   const bank=new WemaProvider(env),wallet=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
   if(['wema/deposits/check','wema/balance/refresh'].includes(path)){await limit(db,`bank-read:${user.id}`,10);return {...await depositAction(db,user,body,path,env),...await summary(db,user)};}
   if(path==='wema/payments/create') {
     const job=await jobFor(db,clean(body.jobId,'job ID',60),user);
     if(job.employer_id!==user.id)fail(403,'Only the employer can pay for this job.');
+    if(job.bank_environment!==env.WEMA_ENVIRONMENT)fail(409,'Create a new payment agreement for this bank environment. Demo agreements cannot spend real funds.');
     if(job.rail!=='wema')fail(409,'Create a Wema payment agreement. Test jobs cannot spend real funds.');
     if(typeof body.password!=='string'||!equal(await passwordHash(body.password,user.password_salt),user.password_hash))fail(401,'Confirm your password before making a bank payment.');
     const recipient=await first(db,"SELECT * FROM wallets WHERE user_id=? AND bank_status='active'",job.worker_id);
-    if(wallet.bank_status!=='active'||!recipient||(env.WEMA_ENVIRONMENT==='production'&&(wallet.bank_environment!=='production'||recipient.bank_environment!=='production')))fail(409,'Both participants need bank-confirmed Wema wallets.');
+    if(wallet.bank_status!=='active'||!recipient||wallet.bank_environment!==env.WEMA_ENVIRONMENT||recipient.bank_environment!==env.WEMA_ENVIRONMENT)fail(409,'Both participants need bank-confirmed Wema wallets.');
     const payment={id:uid('BANK'),user_id:user.id,kind:'payment',reference:uid('LH-PAY'),amount:job.amount,source:wallet.bank_account,destination:recipient.bank_account,job_id:job.id,environment:env.WEMA_ENVIRONMENT};
     const result=await transact(db,user,request,'bank_payment',{jobId:job.id},"EXISTS(SELECT 1 FROM payment_jobs WHERE id=? AND status='accepted' AND rail='wema') AND NOT EXISTS(SELECT 1 FROM bank_requests WHERE job_id=? AND kind='payment')",[job.id,job.id],[
       ({id,at,opCondition})=>[`INSERT INTO bank_requests (id,user_id,kind,reference,amount,source,destination,job_id,status,environment,created_at) SELECT ?,?,'payment',?,?,?,?,?,'created',?,? WHERE ${opCondition}`,[payment.id,user.id,payment.reference,payment.amount,payment.source,payment.destination,job.id,payment.environment,at,id]],
@@ -208,9 +216,9 @@ async function handleBank(db,user,request,body,path,env) {
   }
   if(path==='wema/onboarding/request') {
     if(body.consent!==true)fail(400,'Your consent is required to request a Wema wallet.');
-    if(['active','pending','submitting'].includes(wallet.bank_status))fail(409,'Your Wema wallet is connected or already being processed.');
+    if(['pending','submitting'].includes(wallet.bank_status)||(wallet.bank_status==='active'&&wallet.bank_environment===env.WEMA_ENVIRONMENT))fail(409,'Your Wema wallet is connected or already being processed.');
     if(!/^\d{11}$/.test(body.nin||''))fail(400,'Enter an 11-digit NIN.');
-    await run(db,"UPDATE wallets SET bank_status='submitting',bank_consent_at=? WHERE user_id=?",stamp(),user.id);
+    await run(db,"UPDATE wallets SET bank_status='submitting',bank_account=NULL,bank_name=NULL,bank_environment=NULL,bank_consent_at=? WHERE user_id=?",stamp(),user.id);
     const response=await bank.requestWallet({email:user.email,phoneNumber:user.phone,nin:body.nin});
     const tracking=bank.trackingId(response);
     if(!tracking)fail(502,'Wema did not return a tracking reference. Retry only after checking the bank portal.');
@@ -258,6 +266,7 @@ async function recordBankResult(db,payment,verified) {
   await db.batch(statements);
 }
 async function callback(db,request,body,path,env) {
+  if(env.WEMA_MODE==='demo')fail(503,'Real bank callbacks are disabled in simulation mode.');
   if(path==='webhooks/wema/authorize')return authorizeMandate(db,body,env);
   if(!bankReadiness(env).ready)fail(503,'Wema callbacks are disabled until configuration is confirmed.');
   if(!env.WEMA_CALLBACK_TOKEN||!equal(request.headers.get('x-wema-callback-token'),env.WEMA_CALLBACK_TOKEN))fail(401,'Invalid bank callback authentication.');
@@ -350,7 +359,7 @@ export async function handleRequest(request,env) {
       if(!transaction)fail(404,'Receipt not found.');
       const job=transaction.job_id?await jobFor(db,transaction.job_id,user):null;
       const deposit=transaction.kind==='bank_deposit'?await first(db,'SELECT reference,account,environment,verified_at FROM bank_deposits WHERE receipt_reference=? AND user_id=?',transaction.reference,user.id):null;
-      return send({transaction,job,deposit,issuedTo:user.name,label:transaction.mode==='wema'?'WEMA BANK TRANSFER RECEIPT':transaction.mode==='wema_sandbox'?'WEMA SANDBOX RECEIPT · NO REAL BANK TRANSFER':'TEST RECEIPT · NO REAL BANK TRANSFER',currency:transaction.mode==='wema'?'NGN':'TEST-NGN'});
+      return send({transaction,job,deposit,issuedTo:user.name,label:transaction.mode==='wema'?'WEMA BANK TRANSFER RECEIPT':transaction.mode==='wema_demo'?'SIMULATED WEMA RECEIPT · NO BANK API OR REAL MONEY':transaction.mode==='wema_sandbox'?'WEMA SANDBOX RECEIPT · NO REAL BANK TRANSFER':'TEST RECEIPT · NO REAL BANK TRANSFER',currency:transaction.mode==='wema'?'NGN':'TEST-NGN'});
     }
     if(request.method==='POST'&&(path==='sandbox/fund'||path==='jobs'||/^jobs\/[^/]+\/(accept|decline|reserve|complete|cancel|dispute|review)$/.test(path))) {
       if(env.PAYMENT_MODE!=='sandbox')fail(503,'The test ledger is disabled. Real bank transfers must use the bank adapter.');
@@ -360,7 +369,7 @@ export async function handleRequest(request,env) {
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError?error.status:500);
+    response=send({error:error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
   }
   return response;
 }

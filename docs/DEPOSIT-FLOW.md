@@ -1,5 +1,11 @@
 # LocHire deposit flow
 
+## Active Wema demo mode
+
+LocHire now runs the complete simulated flow described in [WEMA-DEMO.md](WEMA-DEMO.md). Use setup code `123456`, DEMO account IDs, simulated deposit outcomes, and simulated worker payments. This is a LocHire simulator, separate from Wema's actual sandbox. No real NIN, bank OTP or Wema credentials are needed; no Wema API is contacted.
+
+The following bank-transfer instructions describe **bank mode after actual Wema access is activated**.
+
 ## What is live today
 
 The app, database, deposit screens and adapter are deployed. Test top-ups work end to end. Real Wema deposits remain **disabled** until approved product credentials and verified credit/balance response contracts are supplied. Bank behavior is currently tested with simulated responses, not actual Wema sandbox access.

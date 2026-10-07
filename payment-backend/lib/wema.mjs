@@ -1,3 +1,4 @@
+import { demoMode } from './bank-mode.mjs';
 // Public Wema documentation is linked in docs/WEMA-INTEGRATION.md. Some
 // product contracts are subscription-only. Live mode fails closed until Wema
 // confirms those fields, endpoints, callback transport and securityInfo format.
@@ -8,6 +9,7 @@ const base64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-
 const unbase64=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),x=>x.charCodeAt(0));
 const required=['WEMA_BASE_URL','WEMA_API_KEY','WEMA_CHANNEL_ID','WEMA_CALLBACK_TOKEN','WEMA_MANDATE_KEY','WEMA_WALLET_VERIFY_PATH','WEMA_TRANSFER_STATUS_PATH','WEMA_CONTRACT_CONFIRMED','WEMA_ENVIRONMENT'];
 export function bankReadiness(env) {
+  if(env.WEMA_MODE==='demo')return {ready:demoMode(env),simulated:true,status:demoMode(env)?'demo_ready':'demo_disabled',environment:'demo',missing:[],provider:'LocHire Wema simulation',message:'Local simulation. No Wema API, real bank account or real money.'};
   const missing=required.filter(k=>!env[k]||(k==='WEMA_CONTRACT_CONFIRMED'&&env[k]!=='true'));
   if(env.WEMA_ENVIRONMENT&&!['sandbox','production'].includes(env.WEMA_ENVIRONMENT))missing.push('WEMA_ENVIRONMENT');
   return {ready:env.WEMA_ENABLED==='true'&&missing.length===0,status:env.WEMA_ENABLED==='true'&&missing.length===0?'configured':'awaiting_credentials',environment:env.WEMA_ENVIRONMENT||'not_configured',missing,provider:'Wema / ALAT',message:'Wema accounts and transfers become available after bank credentials and the product contract are confirmed.'};
@@ -15,6 +17,7 @@ export function bankReadiness(env) {
 export class WemaProvider {
   constructor(env,fetcher=fetch) { this.env=env;this.fetcher=fetcher; }
   async request(path,body,method='POST',authHeader='x-api-key') {
+    if(this.env.WEMA_MODE==='demo')throw Error('External bank calls are disabled in demo mode.');
     const base=new URL(this.env.WEMA_BASE_URL);
     authHeader=this.env.WEMA_AUTH_HEADER||authHeader;
     if(!['x-api-key','Ocp-Apim-Subscription-Key'].includes(authHeader))throw Error('Unsupported Wema authentication header.');
@@ -95,7 +98,7 @@ export async function createMandate(payment,env) {
 }
 export async function authorizeMandate(db,body,env) {
   const reference=String(body.transactionReference||''),answer={transactionReference:reference,authorized:false};
-  if(!bankReadiness(env).ready)return answer;
+  if(env.WEMA_MODE==='demo'||!bankReadiness(env).ready)return answer;
   try {
     const [iv,data,extra]=String(body.securityInfo||'').split('.');if(!iv||!data||extra)return answer;
     const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:unbase64(iv)},await mandateKey(env),unbase64(data));

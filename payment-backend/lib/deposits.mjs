@@ -1,3 +1,4 @@
+import { demoMode } from './bank-mode.mjs';
 import { WemaProvider, bankReadiness } from './wema.mjs';
 
 export class DepositError extends Error {
@@ -8,6 +9,7 @@ const one=(db,sql,...values)=>db.prepare(sql).bind(...values).first();
 const now=()=>new Date().toISOString();
 const sha=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,'0')).join('');
 export function depositReadiness(env){
+  if(env.WEMA_MODE==='demo')return {ready:demoMode(env),enabled:demoMode(env),simulated:true,environment:'demo',missing:[],method:'simulated_transfer',provider:'LocHire Wema simulation'};
   const bank=bankReadiness(env),missing=['WEMA_DEPOSIT_STATUS_PATH','WEMA_BALANCE_PATH','WEMA_AMOUNT_UNIT'].filter(k=>!env[k]);
   if(env.WEMA_DEPOSIT_CONTRACT_CONFIRMED!=='true')missing.push('WEMA_DEPOSIT_CONTRACT_CONFIRMED');
   if(!['naira','kobo'].includes(env.WEMA_AMOUNT_UNIT))missing.push('WEMA_AMOUNT_UNIT');
@@ -43,7 +45,8 @@ export class WemaDeposits extends WemaProvider {
 export async function depositSummary(db,user){
   const deposits=(await db.prepare('SELECT reference,status,amount,environment,receipt_reference,created_at,verified_at FROM bank_deposits WHERE user_id=? ORDER BY created_at DESC LIMIT 50').bind(user.id).all()).results;
   const balance=await one(db,'SELECT account,available,environment,checked_at FROM bank_balances WHERE user_id=?',user.id);
-  return {bankDeposits:deposits,bankBalance:balance?{available:balance.available,environment:balance.environment,account:balance.account,checkedAt:balance.checked_at,currency:balance.environment==='production'?'NGN':'TEST-NGN'}:null};
+  const demoHeld=balance?.environment==='demo'?await one(db,'SELECT held FROM demo_bank_balances WHERE user_id=?',user.id):null;
+  return {bankDeposits:deposits,bankBalance:balance?{available:balance.available,held:demoHeld?.held||0,environment:balance.environment,account:balance.account,checkedAt:balance.checked_at,currency:balance.environment==='production'?'NGN':'TEST-NGN'}:null};
 }
 function ready(env){if(!depositReadiness(env).ready)fail(503,'Wema deposits are not connected yet. Test funds remain available.');}
 function referenceOf(body){const ref=body.reference||body.data?.transactionReference||body.transactionReference;if(typeof ref!=='string'||!/^[-A-Za-z0-9_]{8,100}$/.test(ref))fail(400,'Enter the bank transaction reference using 8–100 letters, numbers, hyphens or underscores.');return ref;}
