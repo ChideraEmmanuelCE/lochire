@@ -56,7 +56,7 @@ async function summary(db,user) {
   for(const job of jobs)job.location=locationForParticipant(locations.find(l=>l.job_id===job.id),job,user.id);
   const reviews=await all(db,'SELECT r.*,u.name AS author_name FROM payment_reviews r JOIN users u ON u.id=r.author_id WHERE r.target_id=? ORDER BY r.created_at DESC LIMIT 50',user.id);
   const bankPayments=await all(db,"SELECT reference,status,amount,job_id,created_at FROM bank_requests WHERE user_id=? AND kind='payment' ORDER BY created_at DESC LIMIT 20",user.id);
-  return { user:publicUser(user),wallet:{id:user.id,currency:'TEST-NGN',available:w.available,held:w.held,bankStatus:w.bank_status,accountNumber:w.bank_account,accountName:w.bank_name,bankEnvironment:w.bank_environment},...await depositSummary(db,user),transactions,jobs,reviews,bankPayments,trust:await trust(db,user.id) };
+  return { user:publicUser(user),wallet:{id:user.id,currency:'TEST-NGN',activeRole:w.active_role,available:w.available,held:w.held,bankStatus:w.bank_status,accountNumber:w.bank_account,accountName:w.bank_name,bankEnvironment:w.bank_environment},...await depositSummary(db,user),transactions,jobs,reviews,bankPayments,trust:await trust(db,user.id) };
 }
 async function jobFor(db,id,user) {
   const job=await first(db,'SELECT * FROM payment_jobs WHERE id=? AND (employer_id=? OR worker_id=?)',id,user.id,user.id);
@@ -90,7 +90,22 @@ const transactionInsert=(userId,jobId,kind,amountValue,description)=>({id,at,opC
   [`${id}-${kind}-${userId}`,`LH-${id.slice(3,27)}-${kind}-${userId.slice(-6)}`,userId,jobId,kind,amountValue,description,at,id]
 ];
 async function sandboxAction(db,user,request,body,path,env) {
+  if(path==='sandbox/withdraw'){
+    const n=amount(body.amount),destination=clean(body.destination,'fictional destination label',60,3);
+    if(/\b\d{10,11}\b/.test(destination))fail(400,'Use a fictional destination label, not real bank details.');
+    if(n>10000000)fail(400,'Withdraw at most ₦100,000 of test funds.');
+    const w=await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id);
+    if(w.active_role!=='worker')fail(403,'Switch to Finding work to withdraw earnings.');
+    if(typeof body.password!=='string'||!equal(await passwordHash(body.password,user.password_salt),user.password_hash))fail(401,'Confirm your LocHire password.');
+    await transact(db,user,request,'test_withdrawal',{amount:n,destination},'EXISTS(SELECT 1 FROM wallets WHERE user_id=? AND available>=?)',[user.id,n],[
+      ({id,opCondition})=>[`UPDATE wallets SET available=available-? WHERE user_id=? AND ${opCondition}`,[n,user.id,id]],
+      transactionInsert(user.id,null,'test_withdrawal',-n,'Simulated withdrawal to '+destination+' · No real payout')
+    ]);
+    return {...await summary(db,user),message:'Simulated withdrawal completed. No real money was sent.'};
+  }
   if(path==='sandbox/fund') {
+    const w=await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id);
+    if(w.active_role!=='employer')fail(403,'Deposits are for hiring. Switch to Hiring to add funds.');
     const n=amount(body.amount);
     if(n>10000000)fail(400,'Add at most ₦100,000 of test money at a time.');
     const result=await transact(db,user,request,'fund',{amount:n},"COALESCE((SELECT SUM(amount) FROM transactions WHERE user_id=? AND kind='test_credit' AND created_at>?),0)+?<=10000000",[user.id,new Date(Date.now()-86400000).toISOString(),n],[
@@ -100,6 +115,7 @@ async function sandboxAction(db,user,request,body,path,env) {
     return {...result,...await summary(db,user)};
   }
   if(path==='jobs') {
+    if((await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id)).active_role!=='employer')fail(403,'Switch to Hiring to create a payment job.');
     if(!['employer','both'].includes(user.role))fail(403,'Only an employer account can create a payment job.');
     const title=clean(body.title,'job title',100),scope=clean(body.scope,'scope',1500,5),category=clean(body.category,'category',70),n=amount(body.amount);
     const rail=body.rail==='wema'?'wema':'sandbox',bankEnvironment=rail==='wema'?bankReadiness(env).environment:null;
@@ -161,6 +177,15 @@ async function sandboxAction(db,user,request,body,path,env) {
   return summary(db,user);
 }
 async function handleBank(db,user,request,body,path,env) {
+  if(['wema/demo/deposits/create','wema/deposits/check','wema/payments/create'].includes(path)){
+    const w=await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id);
+    if(w.active_role!=='employer')fail(403,'Switch to Hiring to deposit or pay for jobs.');
+  }
+  if(path==='wema/demo/withdrawals/create'){
+    if((await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id)).active_role!=='worker')fail(403,'Switch to Finding work to withdraw earnings.');
+    if(!demoMode(env))fail(503,'Real withdrawals await Wema payout integration.');
+    if(typeof body.password!=='string'||!equal(await passwordHash(body.password,user.password_salt),user.password_hash))fail(401,'Confirm your LocHire password.');
+  }
   const readiness=bankReadiness(env);
   if(!readiness.ready)fail(503,'Wema is not connected yet. The test wallet remains available.');
   if(demoMode(env)){
@@ -326,7 +351,7 @@ export async function handleRequest(request,env) {
         const id=uid('LH'),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt),at=stamp();
         await db.batch([
           db.prepare('INSERT INTO users (id,email,name,phone,role,password_hash,password_salt,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(id,email,name,phone,body.role,hash,salt,at),
-          db.prepare('INSERT INTO wallets (user_id,available,held,bank_status) VALUES (?,0,0,\'not_connected\')').bind(id),
+          db.prepare("INSERT INTO wallets (user_id,available,held,bank_status,active_role) VALUES (?,0,0,'not_connected',?)").bind(id,body.role==='worker'?'worker':'employer'),
         ]);
         user=await first(db,'SELECT * FROM users WHERE id=?',id);
       } else {
@@ -348,6 +373,11 @@ export async function handleRequest(request,env) {
       await limit(db,`postcode:${user.id}`,10);
       return send(await lookupPostcode(body.code,env,user.id));
     }
+    if(path==='wallet/role'&&request.method==='POST'){
+      if(!['worker','employer'].includes(body.role))fail(400,'Choose Finding work or Hiring.');
+      await db.batch([db.prepare('UPDATE wallets SET active_role=? WHERE user_id=?').bind(body.role,user.id),db.prepare("UPDATE users SET role='both' WHERE id=? AND role!=?").bind(user.id,body.role)]);
+      return send(await summary(db,await first(db,'SELECT * FROM users WHERE id=?',user.id)));
+    }
     if(path==='wallet'&&request.method==='GET')return send(await summary(db,user));
     if(path.startsWith('members/')&&request.method==='GET') {
       const member=await first(db,'SELECT id,name,role FROM users WHERE id=?',path.split('/')[1]);
@@ -361,7 +391,7 @@ export async function handleRequest(request,env) {
       const deposit=transaction.kind==='bank_deposit'?await first(db,'SELECT reference,account,environment,verified_at FROM bank_deposits WHERE receipt_reference=? AND user_id=?',transaction.reference,user.id):null;
       return send({transaction,job,deposit,issuedTo:user.name,label:transaction.mode==='wema'?'WEMA BANK TRANSFER RECEIPT':transaction.mode==='wema_demo'?'SIMULATED WEMA RECEIPT · NO BANK API OR REAL MONEY':transaction.mode==='wema_sandbox'?'WEMA SANDBOX RECEIPT · NO REAL BANK TRANSFER':'TEST RECEIPT · NO REAL BANK TRANSFER',currency:transaction.mode==='wema'?'NGN':'TEST-NGN'});
     }
-    if(request.method==='POST'&&(path==='sandbox/fund'||path==='jobs'||/^jobs\/[^/]+\/(accept|decline|reserve|complete|cancel|dispute|review)$/.test(path))) {
+    if(request.method==='POST'&&(path==='sandbox/fund'||path==='sandbox/withdraw'||path==='jobs'||/^jobs\/[^/]+\/(accept|decline|reserve|complete|cancel|dispute|review)$/.test(path))) {
       if(env.PAYMENT_MODE!=='sandbox')fail(503,'The test ledger is disabled. Real bank transfers must use the bank adapter.');
       return send(await sandboxAction(db,user,request,body,path,env));
     }

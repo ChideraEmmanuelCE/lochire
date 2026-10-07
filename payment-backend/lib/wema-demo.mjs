@@ -30,6 +30,12 @@ export async function demoBank(db,user,request,body,path,env,transact){
   await snapshot(db,user.id);return {status:'active',message:'Simulated Wema wallet ready. This is not a real bank account.'};
  }
  wallet=await connected(db,user);
+ if(path==='wema/demo/withdrawals/create'){
+  const n=amount(body.amount),destination=String(body.destination||'').trim();
+  if(destination.length<3||destination.length>60||/\b\d{10,11}\b/.test(destination))fail(400,'Use a fictional destination label, not a real bank account or NIN.');
+  await transact(db,user,request,'demo_withdrawal',{amount:n,destination},'EXISTS(SELECT 1 FROM demo_bank_balances WHERE user_id=? AND available>=?)',[user.id,n],[write('UPDATE demo_bank_balances SET available=available-? WHERE user_id=? AND @op',[n,user.id]),({id,at,opCondition})=>["INSERT INTO transactions (id,reference,user_id,kind,amount,status,description,mode,created_at) SELECT ?,?,?,'bank_withdrawal',?,'successful',?,'wema_demo',? WHERE "+opCondition,[id+'-withdrawal','DEMO-WD-'+id.slice(3),user.id,-n,'Simulated withdrawal to '+destination+' · No real payout',at,id]]]);
+  await snapshot(db,user.id);return {status:'successful',message:'Simulated withdrawal completed. No Wema API or real payout.'};
+ }
  if(path==='wema/balance/refresh'){await snapshot(db,user.id);return {status:'refreshed',message:'Simulated balance refreshed. No Wema request was made.'};}
  if(path==='wema/demo/deposits/create'){
   const n=amount(body.amount),scenario=body.scenario||'successful';if(!['successful','pending','failed'].includes(scenario))fail(400,'Choose a supported demo outcome.');

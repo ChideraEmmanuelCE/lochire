@@ -160,3 +160,7 @@ Never print or commit secrets, passwords, NIN, OTP, bank payloads or session coo
 ### Keeping balances current
 
 Wallet actions immediately update the dashboard. While an authenticated wallet is visible, balances, pending funds and payment records refresh every 30 seconds and on return to the tab. Both participants receive updates from saved server records. Failed updates keep the last saved balance with a warning. See [Wema demo balance updates](docs/WEMA-DEMO.md#balance-updates).
+
+### Worker earnings and hirer deposits
+
+**Finding work** shows receiving, earnings history and simulated withdrawals. It has no deposit feature or requirement. **Hiring** enables deposits and payments. Switch roles with the same wallet, balances and history. Deposit permissions are enforced by the private backend. Demo withdrawals debit available funds once, require the LocHire password, save labelled receipts and never make a real payout. See [worker and hirer modes](docs/WEMA-DEMO.md#worker-and-hirer-modes).

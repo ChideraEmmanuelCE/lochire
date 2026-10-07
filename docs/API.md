@@ -82,3 +82,9 @@ Amounts in `bankDeposits` and `bankBalance` are integer kobo. Deposits have `ref
 Demo setup uses the existing onboarding routes: request with `consent:true` **without NIN**; verify with public code `123456`. `POST /wema/demo/deposits/create` takes integer-kobo `amount` and `scenario` (`successful`, `pending`, `failed`) plus Idempotency-Key. The same saved reference/check settles a pending deposit once. Accounts/balances/deposits use environment `demo`; transactions/receipts use `wema_demo` and TEST-NGN. Existing Wema payment routes simulate guarded transfers between demo wallets, reserve pending amounts and settle on reconciliation. Statement consent/history are simulated. All real bank callback routes are disabled.
 
 `payment_jobs.bank_environment` records the creation environment; a demo agreement cannot be used for a bank transfer. `demo_bank_balances` keeps isolated available/held balances. No demo account ID is a ten-digit bank account number. Actual bank setup must be completed separately after selecting bank mode.
+
+## Wallet mode and demo withdrawals
+
+`POST /wallet/role` accepts `role: worker|employer` and returns the saved wallet summary with `wallet.activeRole`. Switching preserves balances, jobs and transactions. Worker mode rejects `/sandbox/fund`, demo deposit creation/checking and Wema payment creation; create payment agreements in hirer mode.
+
+`POST /sandbox/withdraw` and `POST /wema/demo/withdrawals/create` accept whole-kobo `amount`, a fictional `destination` label, and the LocHire `password`, with Idempotency-Key. Only worker mode can withdraw. Available funds are debited atomically once, held funds are untouched, and a private simulated receipt is saved. Demo Wema withdrawals are unavailable in bank mode. These endpoints make no actual payout.

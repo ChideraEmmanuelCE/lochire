@@ -60,3 +60,27 @@ test('simulation fails closed on live settings and a replay cannot settle anothe
  assert.equal((await h.call('wema/demo/deposits/create',{amount:30000,scenario:'successful'},u.cookie,'first-pending-key')).status,409);
  const [a,b]=await Promise.all([h.call('wema/deposits/check',{reference:first.data.reference},u.cookie,'check-duplicate-a'),h.call('wema/deposits/check',{reference:first.data.reference},u.cookie,'check-duplicate-b')]);assert.equal(a.status,200);assert.equal(b.status,200);assert.equal((await h.call('wallet',undefined,u.cookie)).data.bankBalance.available,10000);
 });
+
+test('workers receive and withdraw while only hiring mode can deposit',async()=>{
+ const h=harness();h.env.WEMA_MODE='demo';const e=await h.register('role-payer','employer'),w=await h.register('role-worker','worker');await setup(h,e);await setup(h,w);
+ assert.equal((await h.call('wallet',undefined,w.cookie)).data.wallet.activeRole,'worker');
+ for(const path of ['sandbox/fund','wema/demo/deposits/create'])assert.equal((await h.call(path,{amount:10000,scenario:'successful'},w.cookie,'worker-deposit-denied')).status,403);
+ const funded=await h.call('wema/demo/deposits/create',{amount:5000000},e.cookie,'hirer-demo-funding');assert.equal(funded.data.bankBalance.available,5000000);
+ const job=(await h.call('jobs',{workerId:w.id,title:'Paid worker',scope:'A fictional job for earnings withdrawal.',category:'Test',amount:2000000,rail:'wema'},e.cookie,'hirer-demo-job')).data.jobs[0].id;
+ await h.call('jobs/'+job+'/accept',{},w.cookie,'worker-accept');const pay=await h.call('wema/payments/create',{jobId:job,password:'ExampleTestPassword123!'},e.cookie,'hirer-demo-pay');await h.call('wema/payments/reconcile',{reference:pay.data.reference},e.cookie,'hirer-demo-settle');
+ const payload={amount:500000,destination:'My demo bank',password:'ExampleTestPassword123!'};
+ assert.equal((await h.call('wema/demo/withdrawals/create',{...payload,password:'Incorrect'},w.cookie,'wrong-withdraw-password')).status,401);
+ const withdrawn=await h.call('wema/demo/withdrawals/create',payload,w.cookie,'worker-withdraw-once');assert.equal(withdrawn.status,200,JSON.stringify(withdrawn.data));assert.equal(withdrawn.data.bankBalance.available,1500000);assert.equal(withdrawn.data.wallet.available,0);
+ const replay=await h.call('wema/demo/withdrawals/create',payload,w.cookie,'worker-withdraw-once');assert.equal(replay.data.bankBalance.available,1500000);assert.equal(replay.data.transactions.filter(t=>t.kind==='bank_withdrawal').length,1);
+ assert.equal((await h.call('wema/demo/withdrawals/create',{...payload,amount:500001},w.cookie,'worker-withdraw-once')).status,409);
+ assert.equal((await h.call('wema/demo/withdrawals/create',{...payload,amount:2000000},w.cookie,'withdraw-overdraft')).status,409);
+ assert.equal((await h.call('wema/demo/withdrawals/create',{...payload,destination:'0123456789'},w.cookie,'real-details-denied')).status,400);
+ const receipt=withdrawn.data.transactions.find(t=>t.kind==='bank_withdrawal');assert.match((await h.call('receipts/'+receipt.reference,undefined,w.cookie)).data.label,/SIMULATED/);assert.equal((await h.call('receipts/'+receipt.reference,undefined,e.cookie)).status,404);
+ const hire=await h.call('wallet/role',{role:'employer'},w.cookie);assert.equal(hire.data.wallet.activeRole,'employer');assert.equal(hire.data.bankBalance.available,1500000);assert.equal(hire.data.user.role,'both');
+ assert.equal((await h.call('wema/demo/withdrawals/create',payload,w.cookie,'hirer-withdraw-denied')).status,403);
+ assert.equal((await h.call('sandbox/fund',{amount:100000},w.cookie,'hirer-test-credit')).status,200);
+ await h.call('wallet/role',{role:'worker'},w.cookie);
+ const testWithdrawal=await h.call('sandbox/withdraw',{...payload,amount:50000},w.cookie,'test-withdraw-once');assert.equal(testWithdrawal.data.wallet.available,50000);assert.equal(testWithdrawal.data.bankBalance.available,1500000);assert.equal((await h.call('sandbox/withdraw',{...payload,amount:50000},w.cookie,'test-withdraw-once')).data.wallet.available,50000);
+ assert.equal((await h.call('wallet/role',{role:'admin'},w.cookie)).status,400);
+ h.env.WEMA_MODE='bank';assert.equal((await h.call('wema/demo/withdrawals/create',payload,w.cookie,'real-withdraw-disabled')).status,503);
+});

@@ -45,8 +45,8 @@ export class WemaDeposits extends WemaProvider {
 export async function depositSummary(db,user){
   const deposits=(await db.prepare('SELECT reference,status,amount,environment,receipt_reference,created_at,verified_at FROM bank_deposits WHERE user_id=? ORDER BY created_at DESC LIMIT 50').bind(user.id).all()).results;
   const balance=await one(db,'SELECT account,available,environment,checked_at FROM bank_balances WHERE user_id=?',user.id);
-  const demoHeld=balance?.environment==='demo'?await one(db,'SELECT held FROM demo_bank_balances WHERE user_id=?',user.id):null;
-  return {bankDeposits:deposits,bankBalance:balance?{available:balance.available,held:demoHeld?.held||0,environment:balance.environment,account:balance.account,checkedAt:balance.checked_at,currency:balance.environment==='production'?'NGN':'TEST-NGN'}:null};
+  const demoHeld=balance?.environment==='demo'?await one(db,'SELECT available,held FROM demo_bank_balances WHERE user_id=?',user.id):null;
+  return {bankDeposits:deposits,bankBalance:balance?{available:demoHeld?.available??balance.available,held:demoHeld?.held||0,environment:balance.environment,account:balance.account,checkedAt:balance.checked_at,currency:balance.environment==='production'?'NGN':'TEST-NGN'}:null};
 }
 function ready(env){if(!depositReadiness(env).ready)fail(503,'Wema deposits are not connected yet. Test funds remain available.');}
 function referenceOf(body){const ref=body.reference||body.data?.transactionReference||body.transactionReference;if(typeof ref!=='string'||!/^[-A-Za-z0-9_]{8,100}$/.test(ref))fail(400,'Enter the bank transaction reference using 8–100 letters, numbers, hyphens or underscores.');return ref;}

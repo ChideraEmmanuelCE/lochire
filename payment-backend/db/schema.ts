@@ -14,6 +14,7 @@ export const sessions = sqliteTable('sessions', {
 export const wallets = sqliteTable('wallets', {
   userId: text('user_id').primaryKey().references(() => users.id),
   available: integer('available').notNull().default(0), held: integer('held').notNull().default(0),
+  activeRole:text('active_role').notNull().default('worker'),
   bankStatus: text('bank_status').notNull().default('not_connected'),
   bankAccount: text('bank_account'), bankName: text('bank_name'),
   bankTracking: text('bank_tracking'), bankConsentAt: text('bank_consent_at'),

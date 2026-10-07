@@ -179,3 +179,24 @@ test('an earlier background response cannot replace a newer deposit balance',asy
   assert.match(w.document.querySelector('.wallet-balance').textContent,/50,000.00/);resolveOld(response(summary()));await oldRefresh;assert.match(w.document.querySelector('.wallet-balance').textContent,/50,000.00/);
  }finally{w.close();}
 });
+
+test('worker wallet hides deposits, enables them after hiring selection, and keeps earnings',async()=>{
+ let a=summary();a.user.role='worker';a.wallet.activeRole='worker';a.wallet.available=2000000;let switches=0;
+ const w=component(async(url,req)=>{if(url.endsWith('/config'))return response(config);if(url.endsWith('/wallet/role')){switches++;a={...a,user:{...a.user,role:'both'},wallet:{...a.wallet,activeRole:JSON.parse(req.body).role}};}return response(a);});
+ try{
+  await w.LocHireWallet.render(w.document.querySelector('main'));
+  assert.equal(w.document.querySelector('[data-wallet-action="deposit"]'),null);assert.equal(w.document.querySelector('[data-wallet-action="wema-deposit"]'),null);assert.equal(w.document.querySelector('[data-wallet-action="new-job"]'),null);assert.ok(w.document.querySelector('[data-wallet-action="withdraw"]'));assert.match(w.document.querySelector('.wallet-mode').textContent,/do not need to deposit/);
+  w.document.querySelector('[data-wallet-action="employer-mode"]').click();await settle();assert.equal(switches,1);assert.ok(w.document.querySelector('[data-wallet-action="deposit"]'));assert.ok(w.document.querySelector('[data-wallet-action="wema-deposit"]'));assert.ok(w.document.querySelector('[data-wallet-action="new-job"]'));assert.equal(w.document.querySelector('[data-wallet-action="withdraw"]'),null);assert.match(w.document.querySelector('.wallet-balance').textContent,/20,000.00/);
+  w.document.querySelector('[data-wallet-action="worker-mode"]').click();await settle();assert.equal(w.document.querySelector('[data-wallet-action="deposit"]'),null);assert.match(w.document.querySelector('.wallet-balance').textContent,/20,000.00/);
+ }finally{w.close();}
+});
+
+test('worker demo withdrawal preserves retry keys and updates the correct balance',async()=>{
+ const a=summary();Object.assign(a.wallet,{activeRole:'worker',bankStatus:'active',bankEnvironment:'demo',accountNumber:'DEMO-FIXTURE',accountName:'Fixture'});a.bankBalance={available:2000000,held:0,environment:'demo',account:'DEMO-FIXTURE',checkedAt:'2026-10-07T00:00:00Z'};const calls=[];
+ const w=component(async(url,req)=>{if(url.endsWith('/config'))return response({...config,wema:{ready:true,simulated:true,environment:'demo',deposits:{ready:true}}});if(url.endsWith('/wallet'))return response(a);calls.push(req);return calls.length===1?response({error:'Temporary failure'},502):response({...a,bankBalance:{...a.bankBalance,available:1500000},message:'Simulated withdrawal completed'});});
+ try{
+  await w.LocHireWallet.render(w.document.querySelector('main'));w.document.querySelector('[data-wallet-action="withdraw"][data-rail="wema"]').click();await settle();assert.match(w.document.querySelector('dialog').textContent,/No real money is sent/);assert.equal(w.document.querySelector('[name="accountNumber"]'),null);
+  const form=w.document.querySelector('#wallet-withdraw');form.querySelector('[name="amount"]').value='5000';form.querySelector('[name="destination"]').value='My demo bank';form.querySelector('[name="password"]').value='FixturePassword123';form.querySelector('[name="consent"]').checked=true;
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);assert.equal(JSON.parse(calls[1].body).amount,500000);assert.match(w.document.querySelector('.wallet-bank-balance').textContent,/15,000.00/);assert.match(w.document.querySelector('.wallet-balance h2').textContent,/0.00/);
+ }finally{w.close();}
+});
