@@ -1,4 +1,5 @@
 import { WemaProvider, bankReadiness, authorizeMandate } from './wema.mjs';
+import { PostcodeError, postcodeReadiness, lookupPostcode, jobLocation, locationForParticipant } from './postcode.mjs';
 
 const enc = new TextEncoder();
 export class ApiError extends Error {
@@ -48,6 +49,8 @@ async function summary(db,user) {
   const w=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
   const transactions=await all(db,'SELECT * FROM transactions WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 100',user.id);
   const jobs=await all(db,'SELECT j.*, e.name AS employer_name,w.name AS worker_name FROM payment_jobs j JOIN users e ON e.id=j.employer_id JOIN users w ON w.id=j.worker_id WHERE employer_id=? OR worker_id=? ORDER BY created_at DESC LIMIT 100',user.id,user.id);
+  const locations=jobs.length?await all(db,`SELECT * FROM job_locations WHERE job_id IN (${jobs.map(()=>'?').join(',')})`,...jobs.map(j=>j.id)):[];
+  for(const job of jobs)job.location=locationForParticipant(locations.find(l=>l.job_id===job.id),job,user.id);
   const reviews=await all(db,'SELECT r.*,u.name AS author_name FROM payment_reviews r JOIN users u ON u.id=r.author_id WHERE r.target_id=? ORDER BY r.created_at DESC LIMIT 50',user.id);
   const bankPayments=await all(db,"SELECT reference,status,amount,job_id,created_at FROM bank_requests WHERE user_id=? AND kind='payment' ORDER BY created_at DESC LIMIT 20",user.id);
   return { user:publicUser(user),wallet:{id:user.id,currency:'TEST-NGN',available:w.available,held:w.held,bankStatus:w.bank_status,accountNumber:w.bank_account,accountName:w.bank_name},transactions,jobs,reviews,bankPayments,trust:await trust(db,user.id) };
@@ -55,6 +58,7 @@ async function summary(db,user) {
 async function jobFor(db,id,user) {
   const job=await first(db,'SELECT * FROM payment_jobs WHERE id=? AND (employer_id=? OR worker_id=?)',id,user.id,user.id);
   if(!job)fail(404,'This payment job is not available to your account.');
+  job.location=locationForParticipant(await first(db,'SELECT * FROM job_locations WHERE job_id=?',id),job,user.id);
   return job;
 }
 // Every money mutation runs as one database transaction. The guard is evaluated
@@ -100,8 +104,10 @@ async function sandboxAction(db,user,request,body,path,env) {
     const worker=await first(db,"SELECT id FROM users WHERE id=? AND role IN ('worker','both')",clean(body.workerId,'worker wallet ID',60));
     if(!worker||worker.id===user.id)fail(400,'Use a different registered worker’s wallet ID.');
     const jobId=uid('JOB');
-    await transact(db,user,request,'create_job',{title,scope,category,amount:n,workerId:worker.id,rail},'1=1',[],[
+    const location=await jobLocation(body,env,user.id);
+    await transact(db,user,request,'create_job',{title,scope,category,amount:n,workerId:worker.id,rail,location},'1=1',[],[
       ({id,at,opCondition})=>[`INSERT INTO payment_jobs (id,employer_id,worker_id,title,scope,category,amount,status,rail,created_at) SELECT ?,?,?,?,?,?,?,'invited',?,? WHERE ${opCondition}`,[jobId,user.id,worker.id,title,scope,category,n,rail,at,id]]
+      ,...(location?[({id,opCondition})=>[`INSERT INTO job_locations (job_id,postcode,status,environment,administrative,address,checked_at) SELECT ?,?,?,?,?,?,? WHERE ${opCondition}`,[jobId,location.postcode,location.status,location.environment,location.administrative?JSON.stringify(location.administrative):null,location.address,location.checkedAt,id]]]:[])
     ]);
     return summary(db,user);
   }
@@ -110,6 +116,7 @@ async function sandboxAction(db,user,request,body,path,env) {
     if(employer)fail(403,'Only the invited worker can respond.');
     await transact(db,user,request,action,{jobId:job.id},"EXISTS(SELECT 1 FROM payment_jobs WHERE id=? AND status='invited')",[job.id],[
       ({id,opCondition})=>[`UPDATE payment_jobs SET status=? WHERE id=? AND ${opCondition}`,[action==='accept'?'accepted':'cancelled',job.id,id]]
+      ,...(action==='accept'?[({id,at,opCondition})=>[`UPDATE job_locations SET accepted_at=? WHERE job_id=? AND ${opCondition}`,[at,job.id,id]]]:[])
     ]);
   } else if(action==='reserve') {
     if(!employer)fail(403,'Only the employer can reserve payment.');
@@ -273,6 +280,7 @@ export async function handleRequest(request,env) {
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
     if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:'sandbox',bank:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:bankReadiness(env),features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:false}});
+    if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
     const origin=request.headers.get('origin');
     if(request.method==='POST'&&!path.startsWith('webhooks/')&&origin!==env.APP_ORIGIN)fail(403,'This request must come from LocHire.');
@@ -313,6 +321,11 @@ export async function handleRequest(request,env) {
       return send({ok:true},200,{'Set-Cookie':'lh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'});
     }
     const user=await session(db,request);
+    if(path==='postcode/lookup'&&request.method==='POST') {
+      if(body.consent!==true)fail(400,'Approve sending this postcode to NIPOST before checking it.');
+      await limit(db,`postcode:${user.id}`,10);
+      return send(await lookupPostcode(body.code,env,user.id));
+    }
     if(path==='wallet'&&request.method==='GET')return send(await summary(db,user));
     if(path.startsWith('members/')&&request.method==='GET') {
       const member=await first(db,'SELECT id,name,role FROM users WHERE id=?',path.split('/')[1]);
@@ -333,7 +346,7 @@ export async function handleRequest(request,env) {
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof ApiError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError?error.status:500);
+    response=send({error:error instanceof ApiError||error instanceof PostcodeError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof PostcodeError?error.status:500);
   }
   return response;
 }

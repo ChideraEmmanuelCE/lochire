@@ -21,6 +21,7 @@ The wallet is a working, authenticated **test-money** application with persisten
 | Reputation | Completed payment-job counts, participant ratings and positive-review percentages with sample counts; no guaranteed reliability badge |
 | Disputes | Record a test dispute and freeze test funds; no automatic release or live administrator notification |
 | Wema preparation | Optional bank onboarding UI, NIN/OTP adapter, debit/beneficiary enquiries, transfer/authorization/requery handlers and consent-based statements |
+| NIPOST postcodes | Optional job-location field, consented account-authenticated lookup adapter, explicit selection, manual/sandbox/live labels, private location sharing after worker acceptance |
 | Deployment | Existing Vercel app and gateway plus private Sites/Cloudflare D1 payment service; credentials stay server-side |
 
 ## Understand the two data areas
@@ -59,6 +60,16 @@ flowchart TD
 
 Money is integer **kobo**, with nonnegative database constraints. Money-changing batches atomically check the current job and balance. An idempotency row guards the transaction. Duplicate requests return the existing result or reject changed details instead of moving money again. Concurrent jobs cannot reserve the same funds.
 
+## NIPOST job locations
+
+In **Post an opening → Work details**, an employer can add an optional postcode. The same field is available in wallet payment agreements. Blank entries keep the existing city/general-area flow. Manual codes are labelled **Not checked**; format validation does not establish that a postcode exists.
+
+When a NIPOST key is configured, sign into the LocHire wallet, consent to sending the code, check it, review the returned location, and choose **Use this job location**. The server signs confirmations for the account and rejects forged, changed or expired results. Exact postcodes and returned building addresses stay out of public listings. Server-saved payment jobs hide them from invited workers until acceptance; declined invitations do not grant access. Authorized receipt views keep the job location linked to its payment reference.
+
+**NIPOST is currently disconnected because no sandbox key has been supplied.** Posting and manual postcode entries already work. The adapter is prepared against the documented HTTP API and tested with simulated provider responses. Sandbox locations are labelled demo data; they are not real residential addresses. Postcode resolution does not verify identity, ownership or reliability, and does not replace GPS-based worker matching.
+
+Read [POSTCODE-INTEGRATION.md](docs/POSTCODE-INTEGRATION.md) for the private backend variables, access levels, official sandbox examples, privacy rules, activation steps and judge walkthrough. As with Wema, secret provider keys never enter the browser or GitHub. Local hiring examples still have their documented localStorage limitations.
+
 ## Wema integration
 
 The intended real-money path is: optional consenting Wema wallet setup → worker accepts a Wema payment agreement → employer confirms password → bank debit authorization → independent verification → job-linked history/receipts.
@@ -75,13 +86,16 @@ No Wema account number is invented. `LH-…` is an application ID, not a bank ac
 |---|---|
 | `index.html`, `style.css`, `app.js`, `domain.js` | Hiring UI and domain rules |
 | `wallet.js`, `wallet.css` | Account, wallet, payment-job, receipt and bank setup UI |
+| `postcode.js`, `postcode.css` | Optional postcode input, consent, lookup preview/selection and private location summaries |
 | `api/gateway.js` | Server-side Vercel gateway with explicit nested-route rewrite |
 | `payment-backend/` | Complete private backend source snapshot, schema, migrations and tests |
 | `payment-backend/lib/service.mjs` | Auth, authorization, atomic ledger, jobs, reviews and callbacks |
 | `payment-backend/lib/wema.mjs` | Bank HTTP adapter, verification and encrypted mandates |
+| `payment-backend/lib/postcode.mjs` | NIPOST lookup adapter, signed location confirmations and participant visibility rules |
 | `payment-backend/db/schema.ts`, `payment-backend/drizzle/` | Database schema and migrations |
 | `docs/API.md` | Routes, request fields, money units and error/idempotency behavior |
 | `docs/WEMA-INTEGRATION.md` | What to get from Wema and activation steps |
+| `docs/POSTCODE-INTEGRATION.md` | NIPOST sandbox setup, job-location privacy and activation steps |
 | `docs/DEMO.md` | Hackaholics demonstration script |
 
 ## Development and checks
@@ -92,7 +106,7 @@ Production and the SQLite-backed service tests use Node 24.
 npm ci
 npm run build
 npm test
-node --test payment-backend/tests/payments.test.mjs
+node --test payment-backend/tests/*.test.mjs
 ```
 
 For static hiring-screen development, serve `dist` locally. The wallet needs the gateway and configured backend; a static HTTP server alone cannot run it. Use `vercel dev` from the linked LocHire project with the root `.env.example` variables. Match `APP_ORIGIN` in gateway and backend for a local origin.

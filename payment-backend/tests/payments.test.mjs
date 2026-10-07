@@ -5,6 +5,38 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { handleRequest } from '../lib/service.mjs';
 import { WemaProvider, createMandate, authorizeMandate } from '../lib/wema.mjs';
 
+test('job postcode addresses are server-protected until acceptance and cannot be forged by clients',async()=>{
+  const h=harness(),e=await h.register('location-owner','employer'),w=await h.register('location-worker','worker'),other=await h.register('location-outsider','employer');
+  assert.equal((await h.call('postcode/config')).data.ready,false);
+  assert.equal((await h.call('postcode/lookup',{code:'FC-01-A01-KP-27',consent:true})).status,401);
+  assert.equal((await h.call('postcode/lookup',{code:'FC-01-A01-KP-27',consent:true},e.cookie)).status,503);
+  Object.assign(h.env,{POSTCODE_ENABLED:'true',POSTCODE_ENVIRONMENT:'sandbox',POSTCODE_API_KEY:'nipost_test_fixture'});
+  const original=global.fetch;let lookups=0;
+  global.fetch=async()=>{lookups++;return Response.json({data:{postcode:'FC-01-A01-KP-27',valid:true,administrative_address:{state_name:'FCT'},recent_house_address:{recent:'Private fixture building address'}}});};
+  try {
+    assert.equal((await h.call('postcode/lookup',{code:'FC-01-A01-KP-27'},e.cookie)).status,400);assert.equal(lookups,0);
+    const checked=await h.call('postcode/lookup',{code:'FC-01-A01-KP-27',consent:true},e.cookie);assert.equal(checked.status,200);
+    const body={workerId:w.id,title:'Postcode job',scope:'Agreed fixture work at a confirmed location.',category:'Plumbing',amount:2000000,postcode:checked.data.postcode,postcodeToken:checked.data.token};
+    assert.equal((await h.call('jobs',body,other.cookie,'wrong-proof-account')).status,400);
+    const created=await h.call('jobs',body,e.cookie,'location-job-key');assert.equal(created.status,200);
+    const id=created.data.jobs[0].id;assert.equal(created.data.jobs[0].location.address,'Private fixture building address');
+    const invited=(await h.call('wallet',undefined,w.cookie)).data.jobs.find(j=>j.id===id);
+    assert.equal(invited.location.privateUntilAccepted,true);assert.equal(JSON.stringify(invited).includes('Private fixture building address'),false);assert.equal(JSON.stringify(invited).includes('FC-01-A01-KP-27'),false);
+    assert.equal((await h.call('wallet',undefined,other.cookie)).data.jobs.length,0);
+    await h.call('jobs/'+id+'/accept',{},w.cookie,'location-accept');
+    const accepted=(await h.call('wallet',undefined,w.cookie)).data.jobs.find(j=>j.id===id);
+    assert.equal(accepted.location.address,'Private fixture building address');assert.equal(accepted.location.environment,'sandbox');
+    const second=await h.call('jobs',{...body,title:'Declined location job'},e.cookie,'declined-location-key');const declinedId=second.data.jobs.find(j=>j.title==='Declined location job').id;
+    const declined=await h.call('jobs/'+declinedId+'/decline',{},w.cookie,'decline-location-key');
+    assert.equal(declined.data.jobs.find(j=>j.id===declinedId).location.privateUntilAccepted,true);
+    const manual=await h.call('jobs',{...body,title:'Manual location',postcodeToken:undefined,address:'Forged address',status:'address_resolved'},e.cookie,'manual-location-key');
+    const location=manual.data.jobs.find(j=>j.title==='Manual location').location;assert.equal(location.status,'unconfirmed');assert.equal(location.address,null);
+    await h.call('sandbox/fund',{amount:5000000},e.cookie,'location-credit');await h.call('jobs/'+id+'/reserve',{},e.cookie,'location-reserve');await h.call('jobs/'+id+'/complete',{},w.cookie,'location-worker-done');await h.call('jobs/'+id+'/complete',{},e.cookie,'location-employer-done');
+    const paid=(await h.call('wallet',undefined,w.cookie)).data.transactions.find(t=>t.kind==='received');
+    const receipt=await h.call('receipts/'+paid.reference,undefined,w.cookie);assert.equal(receipt.data.job.location.postcode,checked.data.postcode);
+  }finally{global.fetch=original;}
+});
+
 function database() {
   const sqlite=new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys=ON');

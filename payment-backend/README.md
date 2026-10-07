@@ -18,3 +18,7 @@ npm run build
 Schema edits: `npm run db:generate`, inspect the new migration, test, then publish. Keep applied migrations unchanged.
 
 `PAYMENT_MODE=sandbox` controls the test ledger. `WEMA_ENABLED=false` disables bank APIs until approved credentials and schemas are configured. Test balances never become real naira. Variable names are in `.env.example`; actual secrets remain in runtime configuration.
+
+## NIPOST postcode locations
+
+`lib/postcode.mjs` performs consented, authenticated postcode lookup and signs account-bound confirmation tokens. `job_locations` stores optional immutable payment-job locations; its accepted timestamp controls worker address visibility. Provider calls remain disabled without the NIPOST key. See the frontend repository's `docs/POSTCODE-INTEGRATION.md` for activation, approved sandbox examples and the privacy contract. Run `node --test tests/*.test.mjs` to include the postcode and payment tests.

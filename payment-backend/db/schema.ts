@@ -28,6 +28,12 @@ export const jobs = sqliteTable('payment_jobs', {
   workerDone: integer('worker_done').notNull().default(0),
   disputeReason: text('dispute_reason'), createdAt: text('created_at').notNull(), completedAt: text('completed_at'),
 }, t => [check('job_amount_positive',sql`${t.amount} >= 100`)]);
+export const jobLocations = sqliteTable('job_locations', {
+  jobId: text('job_id').primaryKey().references(() => jobs.id),
+  postcode: text('postcode').notNull(), status: text('status').notNull(),
+  environment: text('environment').notNull(), administrative: text('administrative'), address: text('address'),
+  checkedAt: text('checked_at'), acceptedAt: text('accepted_at'),
+});
 export const transactions = sqliteTable('transactions', {
   id: text('id').primaryKey(), reference: text('reference').notNull().unique(),
   userId: text('user_id').notNull().references(() => users.id), jobId: text('job_id').references(() => jobs.id),

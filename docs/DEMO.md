@@ -25,3 +25,11 @@ The proposed direct bank payment is separate from the test reserve/release flow.
 - Retries and duplicate callbacks cannot create duplicate wallet movement/history.
 - Trust is based on specific completed-job and review evidence, with sample counts visible.
 - The existing hiring examples remain local; public hiring, delivered email/SMS and moderation need their own live services. Do not claim those are already connected.
+
+## Optional postcode demonstration
+
+In Post an opening → Work details, show the optional postcode field. Without the NIPOST key, enter `FC-01-A01-KP-27` as an unconfirmed demo reference or leave it blank; posting still works. The public opening view hides the full code. After the worker accepts, the engagement view can show the agreed location snapshot.
+
+Once the sandbox key is connected, sign into a LocHire wallet, consent to checking the official sandbox example, review the NIPOST response and select Use this job location. Repeat this in a wallet payment agreement to demonstrate server-enforced address privacy before/after acceptance and its connection to the job receipt. Sandbox records must remain clearly labelled demo data.
+
+Pitch: LocHire connects nearby workers, clarifies where the work happens using NIPOST postcodes, and links agreed work to Wema payment records. The postcode does not establish identity or reliability.

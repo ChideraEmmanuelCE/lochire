@@ -10,13 +10,15 @@ Money is an integer number of **kobo**. `2000000` means ₦20,000. Test balances
 |---|---|---|
 | GET | `/health` | Payment-service/storage/bank status |
 | GET | `/config` | Safe feature flags and names of missing bank settings; no secret values |
+| GET | `/postcode/config` | NIPOST availability, environment and missing setting names; no key values |
+| POST | `/postcode/lookup` | Signed-in account; `code`, `consent: true`; permitted address result plus an account-bound signed confirmation valid for 30 minutes |
 | POST | `/auth/register` | `name`, `email`, Nigerian `phone`, `password` (10+ characters), `role` (`worker`, `employer`, `both`), `demoConsent: true` |
 | POST | `/auth/login` | `email`, `password`; establishes cookie |
 | POST | `/auth/logout` | Revokes the current server session and clears its cookie |
 | GET | `/wallet` | Own user, available/reserved test balances, recent transactions/jobs, eligible reviews and trust evidence |
 | GET | `/members/:walletId` | Registered member's name, role and work evidence; no private contacts or balances |
 | POST | `/sandbox/fund` | `amount`; at most ₦100,000 test credit per rolling 24 hours |
-| POST | `/jobs` | `workerId`, `title`, `scope`, `category`, integer `amount`; optional `rail: wema` only after configuration |
+| POST | `/jobs` | `workerId`, `title`, `scope`, `category`, integer `amount`; optional `rail: wema` only after configuration; optional `postcode` and `postcodeToken` from a confirmed selection |
 | POST | `/jobs/:id/accept` | Invited worker accepts immutable scope/price |
 | POST | `/jobs/:id/decline` | Invited worker cancels invitation |
 | POST | `/jobs/:id/reserve` | Employer reserves test funds after worker acceptance |
@@ -57,4 +59,6 @@ Errors have `{ error: "message" }`. Common codes: 400 invalid input, 401 sign-in
 
 ## Data model
 
-`users`, `sessions`, `wallets`, `payment_jobs`, `transactions`, `operations`, `payment_reviews`, `bank_requests`, `bank_events`, `rate_limits`. Schema and versioned migrations live in `payment-backend/db/schema.ts` and `payment-backend/drizzle/`. Sessions are random opaque tokens; only their hashes are stored. Wallet balances are never taken from browser localStorage.
+`users`, `sessions`, `wallets`, `payment_jobs`, `job_locations`, `transactions`, `operations`, `payment_reviews`, `bank_requests`, `bank_events`, `rate_limits`. Schema and versioned migrations live in `payment-backend/db/schema.ts` and `payment-backend/drizzle/`. Sessions are random opaque tokens; only their hashes are stored. Wallet balances are never taken from browser localStorage.
+
+Job summaries return `location: null` when none was attached. An invited or declined worker receives only `status`, `environment` and `privateUntilAccepted: true`; postcode, address and administrative details are omitted. A server-recorded acceptance grants the participant the stored location, including in their own job-linked receipt view. Manual postcodes are unconfirmed and contain no provider address. See [the postcode guide](POSTCODE-INTEGRATION.md).
