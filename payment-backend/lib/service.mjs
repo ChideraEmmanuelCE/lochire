@@ -1,3 +1,4 @@
+import { DepositError, depositReadiness, depositSummary, depositAction, depositCallback } from './deposits.mjs';
 import { WemaProvider, bankReadiness, authorizeMandate } from './wema.mjs';
 import { PostcodeError, postcodeReadiness, lookupPostcode, jobLocation, locationForParticipant } from './postcode.mjs';
 
@@ -53,7 +54,7 @@ async function summary(db,user) {
   for(const job of jobs)job.location=locationForParticipant(locations.find(l=>l.job_id===job.id),job,user.id);
   const reviews=await all(db,'SELECT r.*,u.name AS author_name FROM payment_reviews r JOIN users u ON u.id=r.author_id WHERE r.target_id=? ORDER BY r.created_at DESC LIMIT 50',user.id);
   const bankPayments=await all(db,"SELECT reference,status,amount,job_id,created_at FROM bank_requests WHERE user_id=? AND kind='payment' ORDER BY created_at DESC LIMIT 20",user.id);
-  return { user:publicUser(user),wallet:{id:user.id,currency:'TEST-NGN',available:w.available,held:w.held,bankStatus:w.bank_status,accountNumber:w.bank_account,accountName:w.bank_name},transactions,jobs,reviews,bankPayments,trust:await trust(db,user.id) };
+  return { user:publicUser(user),wallet:{id:user.id,currency:'TEST-NGN',available:w.available,held:w.held,bankStatus:w.bank_status,accountNumber:w.bank_account,accountName:w.bank_name,bankEnvironment:w.bank_environment},...await depositSummary(db,user),transactions,jobs,reviews,bankPayments,trust:await trust(db,user.id) };
 }
 async function jobFor(db,id,user) {
   const job=await first(db,'SELECT * FROM payment_jobs WHERE id=? AND (employer_id=? OR worker_id=?)',id,user.id,user.id);
@@ -161,13 +162,14 @@ async function handleBank(db,user,request,body,path,env) {
   const readiness=bankReadiness(env);
   if(!readiness.ready)fail(503,'Wema is not connected yet. The test wallet remains available.');
   const bank=new WemaProvider(env),wallet=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
+  if(['wema/deposits/check','wema/balance/refresh'].includes(path)){await limit(db,`bank-read:${user.id}`,10);return {...await depositAction(db,user,body,path,env),...await summary(db,user)};}
   if(path==='wema/payments/create') {
     const job=await jobFor(db,clean(body.jobId,'job ID',60),user);
     if(job.employer_id!==user.id)fail(403,'Only the employer can pay for this job.');
     if(job.rail!=='wema')fail(409,'Create a Wema payment agreement. Test jobs cannot spend real funds.');
     if(typeof body.password!=='string'||!equal(await passwordHash(body.password,user.password_salt),user.password_hash))fail(401,'Confirm your password before making a bank payment.');
     const recipient=await first(db,"SELECT * FROM wallets WHERE user_id=? AND bank_status='active'",job.worker_id);
-    if(wallet.bank_status!=='active'||!recipient)fail(409,'Both participants need bank-confirmed Wema wallets.');
+    if(wallet.bank_status!=='active'||!recipient||(env.WEMA_ENVIRONMENT==='production'&&(wallet.bank_environment!=='production'||recipient.bank_environment!=='production')))fail(409,'Both participants need bank-confirmed Wema wallets.');
     const payment={id:uid('BANK'),user_id:user.id,kind:'payment',reference:uid('LH-PAY'),amount:job.amount,source:wallet.bank_account,destination:recipient.bank_account,job_id:job.id,environment:env.WEMA_ENVIRONMENT};
     const result=await transact(db,user,request,'bank_payment',{jobId:job.id},"EXISTS(SELECT 1 FROM payment_jobs WHERE id=? AND status='accepted' AND rail='wema') AND NOT EXISTS(SELECT 1 FROM bank_requests WHERE job_id=? AND kind='payment')",[job.id,job.id],[
       ({id,at,opCondition})=>[`INSERT INTO bank_requests (id,user_id,kind,reference,amount,source,destination,job_id,status,environment,created_at) SELECT ?,?,'payment',?,?,?,?,?,'created',?,? WHERE ${opCondition}`,[payment.id,user.id,payment.reference,payment.amount,payment.source,payment.destination,job.id,payment.environment,at,id]],
@@ -191,9 +193,18 @@ async function handleBank(db,user,request,body,path,env) {
   if(path==='wema/payments/reconcile') {
     const payment=await first(db,"SELECT * FROM bank_requests WHERE reference=? AND kind='payment' AND user_id=?",clean(body.reference,'payment reference',100),user.id);
     if(!payment)fail(404,'Payment not found.');
+    if(payment.environment!==env.WEMA_ENVIRONMENT)fail(409,'This payment belongs to a different bank environment.');
     const verified=await bank.verifyPayment(payment);
     await recordBankResult(db,payment,verified);
     return {reference:payment.reference,status:verified.status};
+  }
+  if(path==='wema/onboarding/status') {
+    await limit(db,`bank-read:${user.id}`,10);
+    if(wallet.bank_status!=='pending'||!wallet.bank_tracking)fail(409,'There is no pending Wema verification to check.');
+    let verified;try{verified=await bank.verifyCreatedWallet(wallet.bank_tracking);}catch{fail(502,'Wema has not confirmed your account yet. Check again later.');}
+    if(verified.email!==user.email||!/^\d{10}$/.test(verified.accountNumber||'')||typeof verified.accountName!=='string'||!verified.accountName.trim())fail(409,'Bank wallet ownership could not be confirmed.');
+    await run(db,"UPDATE wallets SET bank_status='active',bank_account=?,bank_name=?,bank_environment=? WHERE user_id=? AND bank_status='pending'",verified.accountNumber,verified.accountName,env.WEMA_ENVIRONMENT,user.id);
+    return {status:'active',message:'Wema confirmed your bank wallet.'};
   }
   if(path==='wema/onboarding/request') {
     if(body.consent!==true)fail(400,'Your consent is required to request a Wema wallet.');
@@ -251,18 +262,20 @@ async function callback(db,request,body,path,env) {
   if(!bankReadiness(env).ready)fail(503,'Wema callbacks are disabled until configuration is confirmed.');
   if(!env.WEMA_CALLBACK_TOKEN||!equal(request.headers.get('x-wema-callback-token'),env.WEMA_CALLBACK_TOKEN))fail(401,'Invalid bank callback authentication.');
   const bank=new WemaProvider(env);
+  if(path==='webhooks/wema/deposits')return depositCallback(db,body,env);
   if(path==='webhooks/wema/wallet') {
     const data=body.data||{},email=String(data.email||'').toLowerCase();
     const user=await first(db,"SELECT u.id,w.bank_tracking FROM users u JOIN wallets w ON w.user_id=u.id WHERE u.email=? AND w.bank_status='pending'",email);
     if(!user)fail(404,'Pending wallet not found.');
     const verified=await bank.verifyCreatedWallet(user.bank_tracking);
-    if(verified.email!==email||!/^\d{10}$/.test(verified.accountNumber||''))fail(409,'Bank wallet details could not be independently verified.');
-    await run(db,"UPDATE wallets SET bank_status='active',bank_account=?,bank_name=? WHERE user_id=? AND bank_status='pending'",verified.accountNumber,verified.accountName,user.id);
+    if(verified.email!==email||!/^\d{10}$/.test(verified.accountNumber||'')||typeof verified.accountName!=='string'||!verified.accountName.trim())fail(409,'Bank wallet details could not be independently verified.');
+    await run(db,"UPDATE wallets SET bank_status='active',bank_account=?,bank_name=?,bank_environment=? WHERE user_id=? AND bank_status='pending'",verified.accountNumber,verified.accountName,env.WEMA_ENVIRONMENT,user.id);
     return {received:true};
   }
   const reference=clean(body.data?.transactionReference||body.transactionReference,'transaction reference',100);
   const payment=await first(db,"SELECT * FROM bank_requests WHERE reference=? AND kind='payment'",reference);
   if(!payment)fail(404,'Payment reference not found.');
+  if(payment.environment!==env.WEMA_ENVIRONMENT)fail(409,'This payment belongs to a different bank environment.');
   // Bank notifications are signals, never proof of money movement. Independently
   // requery status, exact amount, currency, source and destination before recording.
   const verified=await bank.verifyPayment(payment);
@@ -279,7 +292,7 @@ export async function handleRequest(request,env) {
     const path=new URL(request.url).pathname.replace(/^\/api\//,'').replace(/\/$/,'');
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
     if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:'sandbox',bank:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
-    if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:bankReadiness(env),features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:false}});
+    if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
     const origin=request.headers.get('origin');
@@ -336,7 +349,8 @@ export async function handleRequest(request,env) {
       const transaction=await first(db,'SELECT * FROM transactions WHERE reference=? AND user_id=?',decodeURIComponent(path.split('/')[1]),user.id);
       if(!transaction)fail(404,'Receipt not found.');
       const job=transaction.job_id?await jobFor(db,transaction.job_id,user):null;
-      return send({transaction,job,issuedTo:user.name,label:transaction.mode==='wema'?'WEMA BANK TRANSFER RECEIPT':transaction.mode==='wema_sandbox'?'WEMA SANDBOX RECEIPT · NO REAL BANK TRANSFER':'TEST RECEIPT · NO REAL BANK TRANSFER',currency:transaction.mode==='wema'?'NGN':'TEST-NGN'});
+      const deposit=transaction.kind==='bank_deposit'?await first(db,'SELECT reference,account,environment,verified_at FROM bank_deposits WHERE receipt_reference=? AND user_id=?',transaction.reference,user.id):null;
+      return send({transaction,job,deposit,issuedTo:user.name,label:transaction.mode==='wema'?'WEMA BANK TRANSFER RECEIPT':transaction.mode==='wema_sandbox'?'WEMA SANDBOX RECEIPT · NO REAL BANK TRANSFER':'TEST RECEIPT · NO REAL BANK TRANSFER',currency:transaction.mode==='wema'?'NGN':'TEST-NGN'});
     }
     if(request.method==='POST'&&(path==='sandbox/fund'||path==='jobs'||/^jobs\/[^/]+\/(accept|decline|reserve|complete|cancel|dispute|review)$/.test(path))) {
       if(env.PAYMENT_MODE!=='sandbox')fail(503,'The test ledger is disabled. Real bank transfers must use the bank adapter.');
@@ -346,7 +360,7 @@ export async function handleRequest(request,env) {
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof ApiError||error instanceof PostcodeError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof PostcodeError?error.status:500);
+    response=send({error:error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError?error.status:500);
   }
   return response;
 }

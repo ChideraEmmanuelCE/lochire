@@ -15,7 +15,7 @@ Money is an integer number of **kobo**. `2000000` means ₦20,000. Test balances
 | POST | `/auth/register` | `name`, `email`, Nigerian `phone`, `password` (10+ characters), `role` (`worker`, `employer`, `both`), `demoConsent: true` |
 | POST | `/auth/login` | `email`, `password`; establishes cookie |
 | POST | `/auth/logout` | Revokes the current server session and clears its cookie |
-| GET | `/wallet` | Own user, available/reserved test balances, recent transactions/jobs, eligible reviews and trust evidence |
+| GET | `/wallet` | Own user, available/reserved test balances, bank environment, separate `bankDeposits` and nullable timestamped `bankBalance`, recent transactions/jobs, eligible reviews and trust evidence |
 | GET | `/members/:walletId` | Registered member's name, role and work evidence; no private contacts or balances |
 | POST | `/sandbox/fund` | `amount`; at most ₦100,000 test credit per rolling 24 hours |
 | POST | `/jobs` | `workerId`, `title`, `scope`, `category`, integer `amount`; optional `rail: wema` only after configuration; optional `postcode` and `postcodeToken` from a confirmed selection |
@@ -29,6 +29,10 @@ Money is an integer number of **kobo**. `2000000` means ₦20,000. Test balances
 | GET | `/receipts/:reference` | Own receipt, related job and test/real label; other participants' receipts are inaccessible |
 | POST | `/wema/onboarding/request` | `nin`, `consent: true`; only when bank-ready; NIN is sent to Wema, never stored |
 | POST | `/wema/onboarding/verify` | `otp`; uses saved bank tracking reference, not a client-supplied wallet owner |
+| POST | `/wema/onboarding/status` | Independently recheck the signed-in user’s pending wallet ownership; persist confirmed account/environment |
+| POST | `/wema/deposits/check` | `reference` only; own active wallet in the current bank environment; requery credit and return refreshed own wallet summary |
+| POST | `/wema/balance/refresh` | Read current available balance from Wema; match account/currency, preserve old timestamp on failure |
+| POST | `/webhooks/wema/deposits` | Authenticated bank credit notification; independently verify reference/account/amount/currency/direction, then save one owned deposit/receipt |
 | POST | `/wema/payments/create` | `jobId`, `password`; employer-only step-up, two active Wema wallets, accepted Wema-rail job |
 | POST | `/wema/payments/reconcile` | `reference`; employer requeries own saved bank payment and independently verifies it |
 | POST | `/wema/statements/request` | `fromDate`, `toDate`, `consent: true`; requires bank wallet and ALAT consent |
@@ -59,6 +63,14 @@ Errors have `{ error: "message" }`. Common codes: 400 invalid input, 401 sign-in
 
 ## Data model
 
-`users`, `sessions`, `wallets`, `payment_jobs`, `job_locations`, `transactions`, `operations`, `payment_reviews`, `bank_requests`, `bank_events`, `rate_limits`. Schema and versioned migrations live in `payment-backend/db/schema.ts` and `payment-backend/drizzle/`. Sessions are random opaque tokens; only their hashes are stored. Wallet balances are never taken from browser localStorage.
+`users`, `sessions`, `wallets`, `payment_jobs`, `job_locations`, `transactions`, `operations`, `payment_reviews`, `bank_requests`, `bank_events`, `bank_deposits`, `bank_balances`, `rate_limits`. Schema and versioned migrations live in `payment-backend/db/schema.ts` and `payment-backend/drizzle/`. Sessions are random opaque tokens; only their hashes are stored. Wallet balances are never taken from browser localStorage.
 
 Job summaries return `location: null` when none was attached. An invited or declined worker receives only `status`, `environment` and `privateUntilAccepted: true`; postcode, address and administrative details are omitted. A server-recorded acceptance grants the participant the stored location, including in their own job-linked receipt view. Manual postcodes are unconfirmed and contain no provider address. See [the postcode guide](POSTCODE-INTEGRATION.md).
+
+## Deposit contract
+
+`/config` now includes `wema.deposits`: readiness, enabled flag, environment and missing setting names, never secret values. Bank read/check operations are limited to 10 attempts per account per five-minute window, alongside the overall request limit. A deposit check is read-only at the bank and repeated references are safe without initiating another transfer.
+
+Amounts in `bankDeposits` and `bankBalance` are integer kobo. Deposits have `reference`, `status` (`pending`, `unknown`, `failed`, `successful`), nullable `amount`, `environment`, `receipt_reference`, `created_at`, and `verified_at`. A user-submitted reference/amount never establishes a successful deposit. Completed deposit receipts include a `deposit` projection with the original bank reference and account. The same reference has one receipt per verified account/environment; callbacks can confirm a deposit even if the user never entered a reference.
+
+`bankBalance` is null until the first successful read. Its `available`, `account`, `currency`, `environment`, and `checkedAt` come from a verified bank read-back. Deposit history does not update `wallet.available` or `wallet.held`. A failed balance request returns 502 and preserves the prior snapshot/timestamp; it never reports zero as a substitute. No outbound transfer is submitted by a deposit check.

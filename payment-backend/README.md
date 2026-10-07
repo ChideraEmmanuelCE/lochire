@@ -22,3 +22,7 @@ Schema edits: `npm run db:generate`, inspect the new migration, test, then publi
 ## NIPOST postcode locations
 
 `lib/postcode.mjs` performs consented, authenticated postcode lookup and signs account-bound confirmation tokens. `job_locations` stores optional immutable payment-job locations; its accepted timestamp controls worker address visibility. Provider calls remain disabled without the NIPOST key. See the frontend repository's `docs/POSTCODE-INTEGRATION.md` for activation, approved sandbox examples and the privacy contract. Run `node --test tests/*.test.mjs` to include the postcode and payment tests.
+
+## Wema deposits
+
+`lib/deposits.mjs` verifies incoming credits independently and persists `bank_deposits` plus private deposit receipts. `bank_balances` stores a timestamped bank-read snapshot. Neither changes the TEST-NGN ledger. The new migration adds environment-specific account ownership. Legacy active accounts with no recorded bank environment cannot use the new deposit path; re-confirm them with the bank rather than guessing their environment. Deposit APIs remain disabled by default until the bank supplies and approves credit/balance endpoints and response mappings. See the public repository’s `docs/DEPOSIT-FLOW.md` and `.env.example`.

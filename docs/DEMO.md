@@ -33,3 +33,9 @@ In Post an opening → Work details, show the optional postcode field. Without t
 Once the sandbox key is connected, sign into a LocHire wallet, consent to checking the official sandbox example, review the NIPOST response and select Use this job location. Repeat this in a wallet payment agreement to demonstrate server-enforced address privacy before/after acceptance and its connection to the job receipt. Sandbox records must remain clearly labelled demo data.
 
 Pitch: LocHire connects nearby workers, clarifies where the work happens using NIPOST postcodes, and links agreed work to Wema payment records. The postcode does not establish identity or reliability.
+
+## Show the deposit flow
+
+Open Wallet → **How deposits work** before signing in, or **Add money** after signing in. Explain the two choices: fictional test top-ups, and transfers into the user's own Wema wallet. Open **See Wema deposit flow** to show the four steps and the disconnected state. No account number is fabricated.
+
+With approved Wema sandbox configuration, demonstrate account setup, copying a confirmed sandbox account, a bank-provided test credit notification, pending reference checks, duplicate notifications, one receipt and a timestamped bank balance. Do not send real money during a sandbox demonstration. The deposit is held by Wema; it is not LocHire escrow or test-wallet credit. See DEPOSIT-FLOW.md for the full activation sequence.

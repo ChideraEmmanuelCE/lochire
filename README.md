@@ -20,6 +20,7 @@ The wallet is a working, authenticated **test-money** application with persisten
 | History and receipts | Server-saved transaction references, filters, related jobs, private receipt views and text downloads |
 | Reputation | Completed payment-job counts, participant ratings and positive-review percentages with sample counts; no guaranteed reliability badge |
 | Disputes | Record a test dispute and freeze test funds; no automatic release or live administrator notification |
+| Wema deposits | Add-money chooser, transfer instructions, copied confirmed account details, pending reference checks, verified deposit history/receipts and timestamped bank balance snapshots; disabled until approved bank configuration |
 | Wema preparation | Optional bank onboarding UI, NIN/OTP adapter, debit/beneficiary enquiries, transfer/authorization/requery handlers and consent-based statements |
 | NIPOST postcodes | Optional job-location field, consented account-authenticated lookup adapter, explicit selection, manual/sandbox/live labels, private location sharing after worker acceptance |
 | Deployment | Existing Vercel app and gateway plus private Sites/Cloudflare D1 payment service; credentials stay server-side |
@@ -36,7 +37,7 @@ A local hiring record can prefill a new payment agreement, but cannot authorize 
 
 1. Open **Wallet** and create a worker test account with fictional details. Copy its `LH-…` wallet ID.
 2. Sign out and create an employer account, or use a second device/private browser session.
-3. Add ₦50,000 test funds. Create a ₦20,000 payment agreement with the copied worker ID and clear scope.
+3. Choose **Add money → Add test funds** and add ₦50,000 test funds. Create a ₦20,000 payment agreement with the copied worker ID and clear scope.
 4. Sign in as the worker and accept the agreement under **Payment jobs**.
 5. Sign in as employer and reserve payment. Available becomes ₦30,000 and Reserved becomes ₦20,000.
 6. Mark the worker's side completed. Payment stays reserved until the employer also confirms.
@@ -70,6 +71,16 @@ When a NIPOST key is configured, sign into the LocHire wallet, consent to sendin
 
 Read [POSTCODE-INTEGRATION.md](docs/POSTCODE-INTEGRATION.md) for the private backend variables, access levels, official sandbox examples, privacy rules, activation steps and judge walkthrough. As with Wema, secret provider keys never enter the browser or GitHub. Local hiring examples still have their documented localStorage limitations.
 
+## Deposit flow
+
+Choose **Wallet → Add money**. **Add test funds** creates fictional funds, capped at ₦100,000 per rolling 24 hours, without charging a bank or card. Retries of the same amount reuse a request key, and fractional kobo are rejected.
+
+**Deposit with Wema** is prepared as a bank transfer into the user's own bank-confirmed Wema wallet: verify the account → transfer using a banking app → receive a bank notification or check the transfer reference → independently verify with Wema → save one deposit receipt. Pending/unknown/failed checks cannot create a successful deposit record. Do not send a second transfer just because the first is pending. The sending bank determines its fees and timing.
+
+The Wema balance is a **timestamped bank snapshot**, never a sum of imported transactions or a conversion of test funds. Bank snapshots and deposit records remain separate from the test ledger; Wema sandbox accounts are explicitly labelled and must not receive real money. **Real deposits are currently disabled because the bank credentials and subscribed deposit/balance contracts have not been supplied.**
+
+Read [DEPOSIT-FLOW.md](docs/DEPOSIT-FLOW.md) for the full user flow, state handling and activation checklist.
+
 ## Wema integration
 
 The intended real-money path is: optional consenting Wema wallet setup → worker accepts a Wema payment agreement → employer confirms password → bank debit authorization → independent verification → job-linked history/receipts.
@@ -91,9 +102,11 @@ No Wema account number is invented. `LH-…` is an application ID, not a bank ac
 | `payment-backend/` | Complete private backend source snapshot, schema, migrations and tests |
 | `payment-backend/lib/service.mjs` | Auth, authorization, atomic ledger, jobs, reviews and callbacks |
 | `payment-backend/lib/wema.mjs` | Bank HTTP adapter, verification and encrypted mandates |
+| `payment-backend/lib/deposits.mjs` | Wema credit requery, account/environment matching, duplicate-safe deposit receipts and bank balance snapshots |
 | `payment-backend/lib/postcode.mjs` | NIPOST lookup adapter, signed location confirmations and participant visibility rules |
 | `payment-backend/db/schema.ts`, `payment-backend/drizzle/` | Database schema and migrations |
 | `docs/API.md` | Routes, request fields, money units and error/idempotency behavior |
+| `docs/DEPOSIT-FLOW.md` | User deposit flow and bank activation/testing requirements |
 | `docs/WEMA-INTEGRATION.md` | What to get from Wema and activation steps |
 | `docs/POSTCODE-INTEGRATION.md` | NIPOST sandbox setup, job-location privacy and activation steps |
 | `docs/DEMO.md` | Hackaholics demonstration script |

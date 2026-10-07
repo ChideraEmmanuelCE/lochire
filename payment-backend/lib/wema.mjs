@@ -16,6 +16,8 @@ export class WemaProvider {
   constructor(env,fetcher=fetch) { this.env=env;this.fetcher=fetcher; }
   async request(path,body,method='POST',authHeader='x-api-key') {
     const base=new URL(this.env.WEMA_BASE_URL);
+    authHeader=this.env.WEMA_AUTH_HEADER||authHeader;
+    if(!['x-api-key','Ocp-Apim-Subscription-Key'].includes(authHeader))throw Error('Unsupported Wema authentication header.');
     const allowed=base.protocol==='https:'&&(['alat.ng','wemabank.com','azure-api.net'].some(h=>base.hostname===h||base.hostname.endsWith('.'+h)));
     if(!allowed)throw Error('Wema must provide a verified HTTPS API base URL.');
     if(typeof path!=='string'||!path.startsWith('/')||path.startsWith('//')||path.includes('://')||path.includes('..'))throw Error('Invalid bank endpoint path.');

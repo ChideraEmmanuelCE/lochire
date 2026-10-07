@@ -55,12 +55,19 @@ Set bank values in the **private payment backend**, not in the Vercel frontend b
 
 The public adapter implements the documented wallet request/OTP and debit-wallet paths. Private subscription response projections are explicitly marked in `lib/wema.mjs`. `bankReadiness()` fails closed while required configuration is missing. No real bank key, NIN or OTP is present in source control.
 
+## Incoming deposits and bank balances
+
+See [DEPOSIT-FLOW.md](DEPOSIT-FLOW.md). Users transfer through a banking app into their own independently confirmed Wema wallet. The new credit-notification handler rechecks the bank before saving deposit history and a private receipt. A manual bank reference is a request to check, not proof of payment. Deposits do not credit TEST-NGN balances, and the displayed Wema amount is a separate timestamped bank snapshot. No screenshot upload or client-supplied amount can establish a confirmed deposit.
+
+Obtain incoming-credit requery and available-balance access in addition to the products above. Configure `WEMA_DEPOSIT_STATUS_PATH`, `WEMA_BALANCE_PATH`, explicit `WEMA_AMOUNT_UNIT`, and the bank's `WEMA_AUTH_HEADER` (`x-api-key` or `Ocp-Apim-Subscription-Key`). Confirm the subscription projections in `lib/deposits.mjs`, then set `WEMA_DEPOSIT_CONTRACT_CONFIRMED=true` and `WEMA_DEPOSITS_ENABLED=true` only after bank sandbox validation. These settings currently remain disabled. The bank wallet environment is stored on activation; sandbox accounts cannot be presented as live deposit accounts after switching credentials.
+
 ## Public callback URLs to register
 
 | URL | Purpose |
 |---|---|
 | `https://lochire.vercel.app/api/webhooks/wema/wallet` | Notification that a requested wallet has been generated; independently verify before activating |
 | `https://lochire.vercel.app/api/webhooks/wema/authorize` | Validate encrypted debit mandate against the saved payment reference, amount, payer and beneficiary |
+| `https://lochire.vercel.app/api/webhooks/wema/deposits` | Incoming-credit notification; independently verify account, reference, credit direction, amount and NGN currency |
 | `https://lochire.vercel.app/api/webhooks/wema/transactions` | Requery the bank and record a verified transfer once |
 
 The private backend origin is not the URL to give the bank. Vercel forwards approved callback requests to it using server-only access credentials.

@@ -17,7 +17,18 @@ export const wallets = sqliteTable('wallets', {
   bankStatus: text('bank_status').notNull().default('not_connected'),
   bankAccount: text('bank_account'), bankName: text('bank_name'),
   bankTracking: text('bank_tracking'), bankConsentAt: text('bank_consent_at'),
-}, t => [check('wallet_nonnegative',sql`${t.available} >= 0 AND ${t.held} >= 0`)]);
+  bankEnvironment: text('bank_environment'),
+}, t => [check('wallet_nonnegative',sql`${t.available} >= 0 AND ${t.held} >= 0`),uniqueIndex('wallet_bank_account_environment').on(t.bankAccount,t.bankEnvironment)]);
+export const bankDeposits = sqliteTable('bank_deposits', {
+  id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),
+  reference:text('reference').notNull(),account:text('account').notNull(),status:text('status').notNull(),
+  amount:integer('amount'),environment:text('environment').notNull(),receiptReference:text('receipt_reference'),
+  createdAt:text('created_at').notNull(),verifiedAt:text('verified_at'),
+},t=>[uniqueIndex('deposit_user_reference_environment').on(t.userId,t.reference,t.environment)]);
+export const bankBalances = sqliteTable('bank_balances', {
+  userId:text('user_id').primaryKey().references(()=>users.id),account:text('account').notNull(),
+  available:integer('available').notNull(),environment:text('environment').notNull(),checkedAt:text('checked_at').notNull(),
+});
 export const jobs = sqliteTable('payment_jobs', {
   id: text('id').primaryKey(), employerId: text('employer_id').notNull().references(() => users.id),
   workerId: text('worker_id').notNull().references(() => users.id),
