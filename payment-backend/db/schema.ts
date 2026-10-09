@@ -82,3 +82,46 @@ export const rateLimits = sqliteTable('rate_limits', {
 export const demoBankBalances = sqliteTable('demo_bank_balances', {
  userId:text('user_id').primaryKey().references(()=>users.id),available:integer('available').notNull().default(0),held:integer('held').notNull().default(0),
 },t=>[check('demo_bank_nonnegative',sql`${t.available} >= 0 AND ${t.held} >= 0`)]);
+
+export const liveProfiles = sqliteTable('live_profiles', {
+  id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),
+  role:text('role').notNull(),published:integer('published').notNull().default(1),
+  suspended:integer('suspended').notNull().default(0),data:text('data').notNull(),
+  revision:integer('revision').notNull().default(1),updatedAt:text('updated_at').notNull(),
+},t=>[uniqueIndex('live_profile_user_role').on(t.userId,t.role)]);
+export const liveOpenings = sqliteTable('live_openings', {
+  id:text('id').primaryKey(),employerId:text('employer_id').notNull().references(()=>liveProfiles.id),
+  status:text('status').notNull(),data:text('data').notNull(),revision:integer('revision').notNull().default(1),createdAt:text('created_at').notNull(),
+});
+export const liveEngagements = sqliteTable('live_engagements', {
+  id:text('id').primaryKey(),openingId:text('opening_id').notNull().references(()=>liveOpenings.id),
+  workerId:text('worker_id').notNull().references(()=>liveProfiles.id),employerId:text('employer_id').notNull().references(()=>liveProfiles.id),
+  status:text('status').notNull(),data:text('data').notNull(),revision:integer('revision').notNull().default(1),createdAt:text('created_at').notNull(),
+},t=>[uniqueIndex('live_engagement_opening_worker').on(t.openingId,t.workerId)]);
+export const liveReviews = sqliteTable('live_reviews', {
+  id:text('id').primaryKey(),engagementId:text('engagement_id').notNull().references(()=>liveEngagements.id),
+  author:text('author').notNull().references(()=>liveProfiles.id),target:text('target').notNull().references(()=>liveProfiles.id),
+  rating:integer('rating').notNull(),text:text('text').notNull(),createdAt:text('created_at').notNull(),
+},t=>[uniqueIndex('live_review_engagement_author').on(t.engagementId,t.author),check('live_rating_range',sql`${t.rating} >= 1 AND ${t.rating} <= 5`)]);
+export const liveBlocks = sqliteTable('live_blocks', {
+  actor:text('actor').notNull().references(()=>liveProfiles.id),target:text('target').notNull().references(()=>liveProfiles.id),
+},t=>[uniqueIndex('live_block_actor_target').on(t.actor,t.target)]);
+export const liveNotifications = sqliteTable('live_notifications', {
+  id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),kind:text('kind').notNull(),title:text('title').notNull(),
+  engagementId:text('engagement_id'),createdAt:text('created_at').notNull(),readAt:text('read_at'),
+});
+export const liveReports = sqliteTable('live_reports', {
+  id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),target:text('target').notNull(),kind:text('kind').notNull(),
+  reason:text('reason').notNull(),details:text('details').notNull(),status:text('status').notNull(),resolution:text('resolution'),createdAt:text('created_at').notNull(),
+});
+export const livePayments = sqliteTable('live_payments', {
+  id:text('id').primaryKey(),engagementId:text('engagement_id').notNull().references(()=>liveEngagements.id),
+  payer:text('payer').notNull().references(()=>liveProfiles.id),recipient:text('recipient').notNull().references(()=>liveProfiles.id),
+  amount:integer('amount').notNull(),method:text('method').notNull(),note:text('note').notNull(),status:text('status').notNull(),createdAt:text('created_at').notNull(),confirmedAt:text('confirmed_at'),
+},t=>[check('live_payment_positive',sql`${t.amount} >= 100`)]);
+export const liveAccountSettings = sqliteTable('live_account_settings', {
+  userId:text('user_id').primaryKey().references(()=>users.id),emailVerifiedAt:text('email_verified_at'),
+});
+export const liveEmailTokens = sqliteTable('live_email_tokens', {
+  id:text('id').primaryKey(),hash:text('hash').notNull().unique(),userId:text('user_id').notNull().references(()=>users.id),purpose:text('purpose').notNull(),expiresAt:integer('expires_at').notNull(),usedAt:text('used_at'),
+});

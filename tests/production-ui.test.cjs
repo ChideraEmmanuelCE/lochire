@@ -1,0 +1,49 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const {DatabaseSync}=require('node:sqlite');
+const {JSDOM,VirtualConsole}=require('jsdom');
+const root=path.join(__dirname,'..');
+const tick=()=>new Promise(resolve=>setTimeout(resolve,25));
+async function fixture(){
+  const {handleRequest}=await import('../payment-backend/lib/service.mjs');
+  const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
+  for(const f of fs.readdirSync(path.join(root,'payment-backend/drizzle')).filter(f=>f.endsWith('.sql')).sort())sqlite.exec(fs.readFileSync(path.join(root,'payment-backend/drizzle',f),'utf8'));
+  const db={prepare(sql){return {bind(...values){return {sql,values,first:async()=>sqlite.prepare(sql).get(...values)||null,all:async()=>({results:sqlite.prepare(sql).all(...values)}),run:async()=>({meta:sqlite.prepare(sql).run(...values)})};}};},async batch(statements){sqlite.exec('BEGIN IMMEDIATE');try{const r=statements.map(s=>({meta:sqlite.prepare(s.sql).run(...s.values)}));sqlite.exec('COMMIT');return r;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
+  const env={DB:db,SERVICE_SECRET:'fixture-service-secret',APP_ORIGIN:'https://lochire.vercel.app',APP_MODE:'production',PAYMENT_MODE:'live',WEMA_MODE:'live',WEMA_ENABLED:'false',WEMA_ENVIRONMENT:'production'};
+  let ip=0;const errors=[];
+  function browser(){let cookie='';const calls=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e));const dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:env.APP_ORIGIN,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});const w=dom.window;
+    w.scrollTo=()=>{};w.AbortSignal=global.AbortSignal;w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+    w.fetch=async(url,options={})=>{calls.push({path:String(url),body:options.body?JSON.parse(options.body):null});const request=new Request(new URL(url,env.APP_ORIGIN),{method:options.method||'GET',headers:{'x-lochire-service-key':env.SERVICE_SECRET,'x-lochire-client-ip':'fixture-'+(++ip),origin:env.APP_ORIGIN,...(cookie?{cookie}:{}),...options.headers},body:options.body});const response=await handleRequest(request,env);const set=response.headers.get('set-cookie');if(set)cookie=set.split(';')[0];return response;};
+    w.eval(fs.readFileSync(path.join(root,'live-domain.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'app.js'),'utf8'));
+    return {w,calls,close:()=>dom.window.close()};
+  }
+  return {browser,errors};
+}
+async function click(b,selector){const el=b.w.document.querySelector(selector);assert.ok(el,selector+' missing');el.click();await tick();}
+function fill(b,values){for(const [name,value]of Object.entries(values)){const active=b.w.document.querySelector("dialog[open] form")||b.w.document.querySelector("main form");const el=active?.querySelector(`[name="${name}"]`);assert.ok(el,name+' missing');if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new b.w.Event('change',{bubbles:true}));}}
+async function submit(b,id){const f=b.w.document.getElementById(id);assert.ok(f,id+' missing');f.dispatchEvent(new b.w.Event('submit',{bubbles:true,cancelable:true}));await tick();await tick();}
+async function register(b,label){await click(b,'#account-button');await click(b,'[data-action="auth-login"]');await click(b,'[data-action="auth-register"]');fill(b,{name:label,email:label+'@example.test',phone:'08012345678',password:'SecureFixturePassword123!',termsConsent:true});await submit(b,'auth-form');assert.match(b.w.document.querySelector('main').textContent,/Your work profile/);}
+async function switchRole(b,role){await click(b,'#role-button');await click(b,`[data-action="role-${role}"]`);}
+async function createProfile(b,worker){await click(b,'[data-action="edit-profile"]');fill(b,worker?{city:'Ibadan',area:'Jericho',occupation:'Plumbing',speciality:'Leak repair',skills:'Pipe fitting',years:'4',experience:'Repair and installation work',pay:'20000',basis:'Per task'}:{city:'Ibadan',area:'Jericho',intro:'A household looking for repairs.'});await submit(b,'profile-form');assert.match(b.w.document.querySelector('main').textContent,/Published/);}
+
+test('the published UI has real account gates, empty discovery and no fictional listings',async()=>{
+  const f=await fixture(),b=f.browser();try{await tick();assert.match(b.w.document.querySelector('main').textContent,/Find local workers/);assert.doesNotMatch(b.w.document.body.textContent,/DEMO|Amaka Eze|Green Table Kitchen/);await click(b,'[data-action="hire"]');assert.match(b.w.document.querySelector('main').textContent,/0 workers/);await click(b,'[data-action="post"]');assert.equal(b.w.document.querySelector('dialog').open,true);assert.ok(b.w.document.querySelector('#auth-form'));assert.equal(f.errors.length,0);}finally{b.close();}
+});
+
+test('two real browser sessions create profiles, post work, agree, complete and publish a review',async()=>{
+  const f=await fixture(),w=f.browser(),e=f.browser();try{
+    await tick();await register(w,'artisan');await createProfile(w,true);await register(e,'hirer');await switchRole(e,'employer');await createProfile(e,false);
+    await click(e,'[data-page="openings"]');await click(e,'[data-action="post"]');const future=new Date(Date.now()+86400000).toISOString().slice(0,10);fill(e,{type:'One-off task',category:'Plumbing',title:'Repair the kitchen pipe',description:'Inspect and repair the leak.',min:'15000',max:'25000',basis:'Per task',skills:'Pipe fitting',date:future,duration:'Two hours',accommodation:'Not applicable'});await submit(e,'opening-form');assert.match(e.w.document.querySelector('main').textContent,/Repair the kitchen pipe/);
+    await click(w,'[data-page="discover"]');await click(w,'[data-action="refresh"]');await click(w,'[data-action="view-opening"]');await click(w,'[data-action="apply"]');fill(w,{message:'I can help with this repair.'});await submit(w,'apply-form');await click(w,'[data-action="record"]');assert.match(w.w.document.querySelector('main').textContent,/I can help/);
+    await click(e,'[data-page="engagements"]');e.w.dispatchEvent(new e.w.Event('focus'));await tick();await click(e,'[data-action="record"]');await click(e,'[data-op="accept"]');await click(e,'[data-action="terms"]');fill(e,{pay:'20000',scope:'Repair the pipe and check for leaks.',schedule:'10am WAT',start:future,completionDate:future});await submit(e,'terms-form');await click(e,'[data-op="confirm"]');await click(e,'[data-action="eng-final"]');
+    w.w.dispatchEvent(new w.w.Event('focus'));await tick();await click(w,'[data-op="confirm"]');await click(w,'[data-action="eng-final"]');assert.match(w.w.document.querySelector('main').textContent,/Confirmed/);
+    await click(w,'[data-op="complete"]');await click(w,'[data-action="eng-final"]');e.w.dispatchEvent(new e.w.Event('focus'));await tick();await click(e,'[data-op="complete"]');await click(e,'[data-action="eng-final"]');await click(e,'[data-action="review"]');fill(e,{rating:'5',text:'The repair was completed well.'});await submit(e,'review-form');
+    await click(e,'[data-action="view-participant"], [data-action="view-person"]');assert.match(e.w.document.querySelector('main').textContent,/5.0 \/ 5/);assert.match(e.w.document.querySelector('main').textContent,/repair was completed well/);assert.equal(f.errors.length,0);
+  }finally{w.close();e.close();}
+});
+
+test('worker wallet has no funding and role changes preserve the wallet route',async()=>{
+  const f=await fixture(),b=f.browser();try{await tick();await register(b,'wallet');await click(b,'[data-page="wallet"]');assert.doesNotMatch(b.w.document.querySelector('main').textContent,/Deposit/);assert.match(b.w.document.querySelector('main').textContent,/not an available wallet balance/);await switchRole(b,'employer');assert.equal(b.w.location.hash,'#wallet');assert.match(b.w.document.querySelector('main').textContent,/Deposit · Coming soon/);await switchRole(b,'worker');assert.equal(b.w.location.hash,'#wallet');assert.doesNotMatch(b.w.document.querySelector('main').textContent,/Deposit/);assert.equal(f.errors.length,0);}finally{b.close();}
+});

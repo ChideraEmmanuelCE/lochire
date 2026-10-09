@@ -1,10 +1,10 @@
 {
   "name": "lochire",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "private": true,
-  "description": "LocHire hiring demo with authenticated Wema-ready wallet and persistent test payment backend",
+  "description": "LocHire live hiring platform with authenticated shared profiles, work agreements, messages, reviews and payment acknowledgements",
   "scripts": {
-    "check": "node --check app.js && node --check domain.js && node --check wallet.js && node --check postcode.js && node --check api/gateway.js",
+    "check": "node --check app.js && node --check live-domain.js && node --check postcode.js && node --check api/gateway.js",
     "test": "node --test tests/*.test.cjs",
     "build": "npm run check && node scripts/build.cjs"
   },

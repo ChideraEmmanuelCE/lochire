@@ -1,3 +1,4 @@
+import { HiringError, live, emailReady, hiringState, hiringAction, adminRoute, accountRoute } from './hiring.mjs';
 import { demoMode } from './bank-mode.mjs';
 import { DemoBankError, demoBank } from './wema-demo.mjs';
 import { DepositError, depositReadiness, depositSummary, depositAction, depositCallback } from './deposits.mjs';
@@ -48,7 +49,13 @@ async function trust(db,userId) {
   const review=await first(db,'SELECT COUNT(*) AS count,AVG(rating) AS average,SUM(CASE WHEN rating>=4 THEN 1 ELSE 0 END) AS positive FROM payment_reviews WHERE target_id=?',userId);
   return { completedJobs: jobs.completed||0, cancelledJobs:jobs.cancelled||0, reviews:review.count||0, rating:review.average?Math.round(review.average*10)/10:null,positiveReviews:review.positive||0,positivePercent:review.count?Math.round((review.positive||0)/review.count*100):null, basis:'Completed payment agreements and participant reviews, including test activity. These records are not a reliability guarantee.' };
 }
-async function summary(db,user) {
+async function summary(db,user,env={}) {
+  if(live(env)) {
+    const w=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
+    const productionBank=w.bank_environment==='production'&&bankReadiness(env).ready;
+    const transactions=await all(db,"SELECT * FROM transactions WHERE user_id=? AND mode='wema' ORDER BY created_at DESC LIMIT 100",user.id);
+    return {user:publicUser(user),wallet:{id:user.id,currency:'NGN',activeRole:w.active_role,available:null,held:null,bankStatus:productionBank?w.bank_status:'not_connected',accountNumber:productionBank?w.bank_account:null,accountName:productionBank?w.bank_name:null,bankEnvironment:'production'},transactions,jobs:[],reviews:[],bankPayments:[],message:productionBank?'Bank-connected wallet.':'Bank deposits and withdrawals are not activated.'};
+  }
   const w=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
   const transactions=await all(db,'SELECT * FROM transactions WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 100',user.id);
   const jobs=await all(db,'SELECT j.*, e.name AS employer_name,w.name AS worker_name FROM payment_jobs j JOIN users e ON e.id=j.employer_id JOIN users w ON w.id=j.worker_id WHERE employer_id=? OR worker_id=? ORDER BY created_at DESC LIMIT 100',user.id,user.id);
@@ -101,7 +108,7 @@ async function sandboxAction(db,user,request,body,path,env) {
       ({id,opCondition})=>[`UPDATE wallets SET available=available-? WHERE user_id=? AND ${opCondition}`,[n,user.id,id]],
       transactionInsert(user.id,null,'test_withdrawal',-n,'Simulated withdrawal to '+destination+' · No real payout')
     ]);
-    return {...await summary(db,user),message:'Simulated withdrawal completed. No real money was sent.'};
+    return {...await summary(db,user,env),message:'Simulated withdrawal completed. No real money was sent.'};
   }
   if(path==='sandbox/fund') {
     const w=await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id);
@@ -112,7 +119,7 @@ async function sandboxAction(db,user,request,body,path,env) {
       ({id,opCondition})=>[`UPDATE wallets SET available=available+? WHERE user_id=? AND ${opCondition}`,[n,user.id,id]],
       transactionInsert(user.id,null,'test_credit',n,'Test funds added · No bank transfer'),
     ]);
-    return {...result,...await summary(db,user)};
+    return {...result,...await summary(db,user,env)};
   }
   if(path==='jobs') {
     if((await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id)).active_role!=='employer')fail(403,'Switch to Hiring to create a payment job.');
@@ -128,7 +135,7 @@ async function sandboxAction(db,user,request,body,path,env) {
       ({id,at,opCondition})=>[`INSERT INTO payment_jobs (id,employer_id,worker_id,title,scope,category,amount,status,rail,bank_environment,created_at) SELECT ?,?,?,?,?,?,?,'invited',?,?,? WHERE ${opCondition}`,[jobId,user.id,worker.id,title,scope,category,n,rail,bankEnvironment,at,id]]
       ,...(location?[({id,opCondition})=>[`INSERT INTO job_locations (job_id,postcode,status,environment,administrative,address,checked_at) SELECT ?,?,?,?,?,?,? WHERE ${opCondition}`,[jobId,location.postcode,location.status,location.environment,location.administrative?JSON.stringify(location.administrative):null,location.address,location.checkedAt,id]]]:[])
     ]);
-    return summary(db,user);
+    return summary(db,user,env);
   }
   const parts=path.split('/'),job=await jobFor(db,parts[1],user),action=parts[2],employer=job.employer_id===user.id;
   if(action==='accept'||action==='decline') {
@@ -174,7 +181,7 @@ async function sandboxAction(db,user,request,body,path,env) {
       ({id,at,opCondition})=>[`INSERT INTO payment_reviews (id,job_id,author_id,target_id,rating,text,created_at) SELECT ?,?,?,?,?,?,? WHERE ${opCondition}`,[uid('REV'),job.id,user.id,employer?job.worker_id:job.employer_id,body.rating,text,at,id]],
     ]);
   } else fail(404,'Payment action not found.');
-  return summary(db,user);
+  return summary(db,user,env);
 }
 async function handleBank(db,user,request,body,path,env) {
   if(['wema/demo/deposits/create','wema/deposits/check','wema/payments/create'].includes(path)){
@@ -191,10 +198,10 @@ async function handleBank(db,user,request,body,path,env) {
   if(demoMode(env)){
     await limit(db,`demo-bank:${user.id}`,30);
     if(path==='wema/payments/create'&&(typeof body.password!=='string'||!equal(await passwordHash(body.password,user.password_salt),user.password_hash)))fail(401,'Confirm your LocHire password for the simulated payment.');
-    const result=await demoBank(db,user,request,body,path,env,transact);return {...result,...await summary(db,user)};
+    const result=await demoBank(db,user,request,body,path,env,transact);return {...result,...await summary(db,user,env)};
   }
   const bank=new WemaProvider(env),wallet=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
-  if(['wema/deposits/check','wema/balance/refresh'].includes(path)){await limit(db,`bank-read:${user.id}`,10);return {...await depositAction(db,user,body,path,env),...await summary(db,user)};}
+  if(['wema/deposits/check','wema/balance/refresh'].includes(path)){await limit(db,`bank-read:${user.id}`,10);return {...await depositAction(db,user,body,path,env),...await summary(db,user,env)};}
   if(path==='wema/payments/create') {
     const job=await jobFor(db,clean(body.jobId,'job ID',60),user);
     if(job.employer_id!==user.id)fail(403,'Only the employer can pay for this job.');
@@ -325,7 +332,8 @@ export async function handleRequest(request,env) {
     if(!env.SERVICE_SECRET||!equal(request.headers.get('x-lochire-service-key'),env.SERVICE_SECRET))fail(403,'Use the LocHire application to access this service.');
     const path=new URL(request.url).pathname.replace(/^\/api\//,'').replace(/\/$/,'');
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
-    if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:'sandbox',bank:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
+    if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
+    if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:bankReadiness(env).ready&&env.WEMA_ENVIRONMENT==='production'&&depositReadiness(env).ready,emailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
@@ -334,7 +342,9 @@ export async function handleRequest(request,env) {
     if(Number(request.headers.get('content-length')||0)>16000)fail(413,'Request is too large.');
     let body={};
     if(request.method==='POST') {const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');try{body=JSON.parse(raw||'{}');}catch{fail(400,'Invalid JSON request.');}if(!body||Array.isArray(body)||typeof body!=='object')fail(400,'Invalid request body.');}
-    await limit(db,request.headers.get('x-lochire-client-ip')||'unknown');
+    await limit(db,request.headers.get('x-lochire-client-ip')||'unknown',120);
+    if(path==='hiring/state'&&request.method==='GET'){let viewer=null;try{viewer=await session(db,request);}catch(error){if(error.status!==401)throw error;}return send(await hiringState(db,viewer,env,request));}
+    if(['auth/forgot','auth/reset','auth/verify'].includes(path)&&request.method==='POST'){await limit(db,'account:'+ (request.headers.get('x-lochire-client-ip')||'unknown'),10);return send(await accountRoute({db,user:null,env,request,body,path,passwordHash}));}
     if(path.startsWith('webhooks/')&&request.method==='POST')return send(await callback(db,request,body,path,env));
     if(['auth/register','auth/login'].includes(path)&&request.method==='POST') {
       const email=clean(body.email,'email address',254).toLowerCase();
@@ -346,7 +356,7 @@ export async function handleRequest(request,env) {
         const name=clean(body.name,'name',70),phone=clean(body.phone,'phone number',20);
         if(!/^(\+234|0)\d{10}$/.test(phone))fail(400,'Use a Nigerian number, starting with 0 or +234.');
         if(!['worker','employer','both'].includes(body.role))fail(400,'Choose worker, employer or both.');
-        if(body.demoConsent!==true)fail(400,'Confirm that this is a test account with no real money.');
+        if(live(env)?body.termsConsent!==true:body.demoConsent!==true)fail(400,live(env)?'Agree to the LocHire terms and privacy notice.':'Confirm that this is a test account with no real money.');
         if(await first(db,'SELECT id FROM users WHERE email=?',email))fail(409,'This email is already registered. Sign in instead.');
         const id=uid('LH'),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt),at=stamp();
         await db.batch([
@@ -360,7 +370,7 @@ export async function handleRequest(request,env) {
         if(!user||!equal(hash,user.password_hash))fail(401,'Email or password is incorrect.');
       }
       const token=await newSession(db,user.id);
-      return send(await summary(db,user),path==='auth/register'?201:200,{'Set-Cookie':sessionCookie(token,env.APP_ORIGIN?.startsWith('https:'))});
+      return send(await summary(db,user,env),path==='auth/register'?201:200,{'Set-Cookie':sessionCookie(token,env.APP_ORIGIN?.startsWith('https:'))});
     }
     if(path==='auth/logout'&&request.method==='POST') {
       const token=request.headers.get('cookie')?.match(/(?:^|;\s*)lh_session=([^;]+)/)?.[1];
@@ -368,6 +378,10 @@ export async function handleRequest(request,env) {
       return send({ok:true},200,{'Set-Cookie':'lh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'});
     }
     const user=await session(db,request);
+    if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
+    if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path}));
+    if(['auth/password','auth/verification/request'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
+    if(live(env)&&path.startsWith('wema/')&&(!bankReadiness(env).ready||env.WEMA_ENVIRONMENT!=='production'||path.includes('/demo/')))fail(503,'Bank deposits and withdrawals are not activated.');
     if(path==='postcode/lookup'&&request.method==='POST') {
       if(body.consent!==true)fail(400,'Approve sending this postcode to NIPOST before checking it.');
       await limit(db,`postcode:${user.id}`,10);
@@ -376,9 +390,9 @@ export async function handleRequest(request,env) {
     if(path==='wallet/role'&&request.method==='POST'){
       if(!['worker','employer'].includes(body.role))fail(400,'Choose Finding work or Hiring.');
       await db.batch([db.prepare('UPDATE wallets SET active_role=? WHERE user_id=?').bind(body.role,user.id),db.prepare("UPDATE users SET role='both' WHERE id=? AND role!=?").bind(user.id,body.role)]);
-      return send(await summary(db,await first(db,'SELECT * FROM users WHERE id=?',user.id)));
+      return send(await summary(db,await first(db,'SELECT * FROM users WHERE id=?',user.id),env));
     }
-    if(path==='wallet'&&request.method==='GET')return send(await summary(db,user));
+    if(path==='wallet'&&request.method==='GET')return send(await summary(db,user,env));
     if(path.startsWith('members/')&&request.method==='GET') {
       const member=await first(db,'SELECT id,name,role FROM users WHERE id=?',path.split('/')[1]);
       if(!member)fail(404,'Wallet ID not found.');
@@ -392,14 +406,14 @@ export async function handleRequest(request,env) {
       return send({transaction,job,deposit,issuedTo:user.name,label:transaction.mode==='wema'?'WEMA BANK TRANSFER RECEIPT':transaction.mode==='wema_demo'?'SIMULATED WEMA RECEIPT · NO BANK API OR REAL MONEY':transaction.mode==='wema_sandbox'?'WEMA SANDBOX RECEIPT · NO REAL BANK TRANSFER':'TEST RECEIPT · NO REAL BANK TRANSFER',currency:transaction.mode==='wema'?'NGN':'TEST-NGN'});
     }
     if(request.method==='POST'&&(path==='sandbox/fund'||path==='sandbox/withdraw'||path==='jobs'||/^jobs\/[^/]+\/(accept|decline|reserve|complete|cancel|dispute|review)$/.test(path))) {
-      if(env.PAYMENT_MODE!=='sandbox')fail(503,'The test ledger is disabled. Real bank transfers must use the bank adapter.');
+      if(live(env)||env.PAYMENT_MODE!=='sandbox')fail(503,'The test ledger is disabled. Real bank transfers must use the bank adapter.');
       return send(await sandboxAction(db,user,request,body,path,env));
     }
     if(request.method==='POST'&&path.startsWith('wema/'))return send(await handleBank(db,user,request,body,path,env));
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
+    response=send({error:error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
   }
   return response;
 }

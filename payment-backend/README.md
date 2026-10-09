@@ -1,36 +1,27 @@
-# LocHire private payment service
+# LocHire live service
 
-Persistent wallet accounts, test ledger, payment agreements, receipts, reviews and an isolated Wema adapter. LocHire's Vercel gateway accesses this service through its owner-private Sites boundary.
+LocHire's private API serves the public app at https://lochire.vercel.app.
 
-Product/integration documentation: https://github.com/ChideraEmmanuelCE/lochire
+The hiring platform now uses authenticated, shared D1 records for profiles, openings, conversations, agreed work, completion, reviews, in-app notifications, reports and participant-acknowledged direct payments. Browser-local hiring examples are not imported into live listings.
 
-`app/api/[...path]/route.ts` routes requests to `lib/service.mjs`. The service implements secure sessions, participant authorization, integer-kobo accounting and idempotent transactional batches. `lib/wema.mjs` implements bank HTTP methods, read-back verification and encrypted debit mandates. Live calls fail closed until the subscribed bank contract is confirmed.
+## Production configuration
 
-`db/schema.ts` and `drizzle/` own the D1 schema. `tests/payments.test.mjs` exercises the service with SQLite and separately mocked bank responses.
+- `APP_MODE=production`, `PAYMENT_MODE=live`, `WEMA_MODE=live`, `WEMA_ENVIRONMENT=production`.
+- Keep `WEMA_ENABLED=false` until the subscribed product contracts and production credentials have been confirmed. Test-money funding, withdrawals and bank simulations are blocked at the service boundary in production.
+- Keep the existing `SERVICE_SECRET`, `APP_ORIGIN` and private Site audience. Gateway credentials remain server-only.
+- `ADMIN_EMAILS` identifies permitted administrator email addresses. Email-based admin access also requires verification. Alternatively configure `ADMIN_USER_IDS` only for owner-verified existing account IDs through private runtime settings; registration alone does not grant administration.
+- Email verification and recovery require secret `RESEND_API_KEY` and verified `EMAIL_FROM`. Without them, the API explicitly reports that email delivery is unavailable. Signed-in password changes already work and revoke all sessions.
 
-Preserve the Sites Vinext starter's `sites()` integration, project ID and `DB` binding in `.openai/hosting.json`. Configure runtime secrets through Sites, then deploy a saved version. Keep the service private.
+## Data and safety
 
-```sh
-node --test tests/payments.test.mjs
-npm run build
-```
+Migration 0008 adds the live hiring tables without rewriting applied migrations or erasing test history. Historical test balances are retained privately and cannot become spendable production funds. Live wallet summaries hide test balances and simulation transactions.
 
-Schema edits: `npm run db:generate`, inspect the new migration, test, then publish. Keep applied migrations unchanged.
+Profile ownership derives from the session. Only participants can access and change conversations or payment declarations. Revision checks reject stale edits. Both sides confirm the current work version and completion before reviews. Only the receiving worker can acknowledge a payment. These declarations are not bank verification, custody, escrow or withdrawable balances.
 
-`PAYMENT_MODE=sandbox` controls the test ledger. `WEMA_ENABLED=false` disables bank APIs until approved credentials and schemas are configured. Test balances never become real naira. Variable names are in `.env.example`; actual secrets remain in runtime configuration.
+Exact locations and account contacts stay private. Discovery returns coarse distance, and shared location expires after 24 hours. Private postcodes appear to workers after invitation acceptance. Reports are stored privately; verified administrators can resolve them and suspend reported profiles. Suspended profiles cannot republish themselves.
 
-## NIPOST postcode locations
+## Checks and publication
 
-`lib/postcode.mjs` performs consented, authenticated postcode lookup and signs account-bound confirmation tokens. `job_locations` stores optional immutable payment-job locations; its accepted timestamp controls worker address visibility. Provider calls remain disabled without the NIPOST key. See the frontend repository's `docs/POSTCODE-INTEGRATION.md` for activation, approved sandbox examples and the privacy contract. Run `node --test tests/*.test.mjs` to include the postcode and payment tests.
+Run `node --test tests/*.test.mjs` and build through the Sites helper. Publish from the existing Site identity in `.openai/hosting.json`; preserve the `DB` binding and owner-private audience. Update the corresponding backend source snapshot in `ChideraEmmanuelCE/lochire` together with a backend publication. A GitHub frontend push does not deploy this backend.
 
-## Wema deposits
-
-`lib/deposits.mjs` verifies incoming credits independently and persists `bank_deposits` plus private deposit receipts. `bank_balances` stores a timestamped bank-read snapshot. Neither changes the TEST-NGN ledger. The new migration adds environment-specific account ownership. Legacy active accounts with no recorded bank environment cannot use the new deposit path; re-confirm them with the bank rather than guessing their environment. Deposit APIs remain disabled by default until the bank supplies and approves credit/balance endpoints and response mappings. See the public repository’s `docs/DEPOSIT-FLOW.md` and `.env.example`.
-
-## Complete Wema simulation
-
-Set `WEMA_MODE=demo`, `PAYMENT_MODE=sandbox`, `WEMA_ENABLED=false`, and keep `WEMA_ENVIRONMENT` out of production. No credentials are required. The simulator is `lib/wema-demo.mjs`; it never calls Wema. Setup rejects NIN and accepts only the public demonstration code `123456`. Account IDs start with `DEMO-` and are not bank account numbers. Separate `demo_bank_balances` are changed in guarded atomic operations. Deposits support successful/pending/failed scenarios, transfers persist pending requests and settle once, history consent is simulated, and receipts use `wema_demo`/TEST-NGN. Bank callbacks are disabled. Payment agreements record their environment and cannot migrate demo funds into real money. Change `WEMA_MODE=bank` before activating actual bank sandbox contracts; create new bank-environment agreements and complete real bank setup. Demo records remain labelled simulation.
-
-## Worker and hirer wallet modes
-
-`wallets.active_role` persists worker/employer mode. Worker mode receives payments and permits simulated withdrawals; hiring mode enables deposits and payment creation. `/wallet/role` switches the same account without changing balances or records. Migration 0007 preserves existing employer/both wallets in hiring mode; newly registered workers start in worker mode. Simulated withdrawal routes debit available funds atomically, require the LocHire password and an idempotency key, preserve held funds, and create private test receipts. No external payout is made. Bank withdrawals remain disabled until approved Wema payout contracts are integrated. Demo balance summaries read the isolated ledger directly rather than trusting a potentially stale cached snapshot.
+The current production frontend deliberately keeps Wema deposits and withdrawals unavailable. Final bank activation also needs the real payout contract and a matching frontend bank flow, followed by approved bank end-to-end testing. No real Wema calls have been verified yet.

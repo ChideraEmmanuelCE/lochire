@@ -57,6 +57,13 @@
       "when": 1791371601406,
       "tag": "0007_slim_morlocks",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791581604193,
+      "tag": "0008_handy_hawkeye",
+      "breakpoints": true
     }
   ]
 }
