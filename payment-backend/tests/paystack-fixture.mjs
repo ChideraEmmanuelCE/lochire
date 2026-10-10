@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync,readdirSync} from 'node:fs';
+import {handleRequest} from '../lib/service.mjs';
+
+export function harness(){
+  const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
+  for(const f of readdirSync(new URL('../drizzle/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL('../drizzle/'+f,import.meta.url),'utf8'));
+  const db={prepare(sql){return {bind(...values){return {sql,values,first:async()=>sqlite.prepare(sql).get(...values)||null,all:async()=>({results:sqlite.prepare(sql).all(...values)}),run:async()=>({meta:sqlite.prepare(sql).run(...values)})};}};},async batch(statements){sqlite.exec('BEGIN IMMEDIATE');try{const r=statements.map(s=>({meta:sqlite.prepare(s.sql).run(...s.values)}));sqlite.exec('COMMIT');return r;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
+  const env={DB:db,SERVICE_SECRET:'private-test-service',APP_ORIGIN:'https://lochire.vercel.app',APP_MODE:'production',PAYMENT_MODE:'live',WEMA_MODE:'live',WEMA_ENVIRONMENT:'production',WEMA_ENABLED:'false',ADMIN_EMAILS:'owner@example.test'};let count=0;
+  async function call(path,body,user,headers={}){const req=new Request('https://private.test/api/'+path,{method:body===undefined?'GET':'POST',headers:{'x-lochire-service-key':env.SERVICE_SECRET,origin:env.APP_ORIGIN,'x-lochire-client-ip':'fixture-'+(++count),...(user?.cookie?{cookie:user.cookie}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});const response=await handleRequest(req,env);return {status:response.status,data:await response.json(),cookie:response.headers.get('set-cookie')?.split(';')[0]};}
+  async function register(name){const r=await call('auth/register',{name,email:name+'@example.test',phone:'08012345678',role:'both',password:'SecureFixturePassword123!',termsConsent:true});assert.equal(r.status,201,JSON.stringify(r.data));return {id:r.data.user.id,cookie:r.cookie,name};}
+  const future=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const worker={name:'Fixture artisan',city:'Ibadan',area:'Jericho',occupation:'Plumbing',speciality:'Leak repairs',skills:['Pipe fitting'],years:4,experience:'Repairs and installation',types:['One-off task','Ongoing job'],days:['Mon','Tue','Wed','Thu','Fri'],hoursStart:'08:00',hoursEnd:'17:00',start:future,coverage:['Jericho'],travel:true,flexible:false,pay:20000,basis:'Per task',accommodation:'Not applicable',published:true,acceptingBookings:true,coordinates:{lat:7.406231,lon:3.861951,accuracy:15}};
+  const employer={name:'Fixture hirer',city:'Ibadan',area:'Jericho',type:'Household',intro:'Home repair work',business:''};
+  const opening={requestId:crypto.randomUUID(),title:'Repair kitchen pipe',description:'Inspect and repair the leaking pipe.',category:'Plumbing',type:'One-off task',city:'Ibadan',area:'Jericho',quote:false,min:15000,max:25000,basis:'Per task',skills:['Pipe fitting'],years:1,days:[],start:future,date:future,duration:'Two hours',materials:'Discuss together',accommodation:'Not applicable',postcode:'OY-PRIVATE-01'};
+  async function setup(){const e=await register('hirer'),w=await register('artisan'),outsider=await register('outsider');let r=await call('hiring/profiles/employer',employer,e);assert.equal(r.status,200,JSON.stringify(r.data));e.profile=r.data.employer.id;r=await call('hiring/profiles/worker',worker,w);assert.equal(r.status,200,JSON.stringify(r.data));w.profile=r.data.worker.id;r=await call('hiring/openings',opening,e);assert.equal(r.status,200,JSON.stringify(r.data));const oid=r.data.openings[0].id;return {e,w,outsider,oid};}
+  async function current(user,gid){return (await call('hiring/state',undefined,user)).data.engagements.find(g=>g.id===gid);}
+  async function action(user,gid,op,body={}){const g=await current(user,gid);return call('hiring/engagements/'+gid+'/'+op,{revision:g.revision,...body},user);}
+  async function invite(e,w,oid){const r=await call('hiring/engagements',{role:'employer',workerId:w.profile,openingId:oid,message:'Please discuss the repair.'},e);assert.equal(r.status,200,JSON.stringify(r.data));return r.data.engagements[0].id;}
+  async function confirmWork(e,w,gid){await action(w,gid,'accept');const t={scope:'Repair the pipe and check for leaks.',pay:20000,basis:'Per task',schedule:'Tomorrow 10am WAT',start:future,completionDate:future,city:'Ibadan',area:'Jericho',paymentMethod:'cash'};let r=await action(e,gid,'terms',{terms:t});assert.equal(r.status,200,JSON.stringify(r.data));await action(w,gid,'confirm',{version:1});r=await action(e,gid,'confirm',{version:1});assert.equal(r.status,200);assert.equal(r.data.engagements[0].status,'Confirmed');}
+  return {db,env,call,register,setup,current,action,invite,confirmWork,worker,employer,opening};
+}

@@ -1,3 +1,4 @@
+import { PaystackError, paymentReadiness, onlineState, paymentAction, paystackWebhook } from './paystack.mjs';
 import { HiringError, live, emailReady, hiringState, hiringAction, adminRoute, accountRoute } from './hiring.mjs';
 import { demoMode } from './bank-mode.mjs';
 import { DemoBankError, demoBank } from './wema-demo.mjs';
@@ -28,7 +29,7 @@ function amount(value) { if (!Number.isSafeInteger(value)||value<100||value>1000
 function sessionCookie(token, secure=true) { return `lh_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${secure?'; Secure':''}`; }
 async function session(db, request) {
   const token = request.headers.get('cookie')?.match(/(?:^|;\s*)lh_session=([^;]+)/)?.[1];
-  if (!token || !/^[a-f0-9]{64}$/.test(token)) fail(401,'Sign in to your wallet first.');
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) fail(401,'Sign in to your LocHire account first.');
   const user=await first(db,'SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>?',await digest(token),Date.now());
   if(!user)fail(401,'Your session has expired. Please sign in again.');
   return user;
@@ -52,9 +53,7 @@ async function trust(db,userId) {
 async function summary(db,user,env={}) {
   if(live(env)) {
     const w=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
-    const productionBank=w.bank_environment==='production'&&bankReadiness(env).ready;
-    const transactions=await all(db,"SELECT * FROM transactions WHERE user_id=? AND mode='wema' ORDER BY created_at DESC LIMIT 100",user.id);
-    return {user:publicUser(user),wallet:{id:user.id,currency:'NGN',activeRole:w.active_role,available:null,held:null,bankStatus:productionBank?w.bank_status:'not_connected',accountNumber:productionBank?w.bank_account:null,accountName:productionBank?w.bank_name:null,bankEnvironment:'production'},transactions,jobs:[],reviews:[],bankPayments:[],message:productionBank?'Bank-connected wallet.':'Bank deposits and withdrawals are not activated.'};
+    return {user:publicUser(user),wallet:{id:user.id,currency:'NGN',activeRole:w.active_role,available:null,held:null,bankStatus:'direct_settlement',accountNumber:null,accountName:null},transactions:[],jobs:[],reviews:[],bankPayments:[],...await onlineState(db,user,env),message:'Paystack settles online payments to the worker’s connected bank account.'};
   }
   const w=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
   const transactions=await all(db,'SELECT * FROM transactions WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 100',user.id);
@@ -332,14 +331,16 @@ export async function handleRequest(request,env) {
     if(!env.SERVICE_SECRET||!equal(request.headers.get('x-lochire-service-key'),env.SERVICE_SECRET))fail(403,'Use the LocHire application to access this service.');
     const path=new URL(request.url).pathname.replace(/^\/api\//,'').replace(/\/$/,'');
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
-    if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
-    if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:bankReadiness(env).ready&&env.WEMA_ENVIRONMENT==='production'&&depositReadiness(env).ready,emailDelivery:emailReady(env)}});
+    if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:live(env)?paymentReadiness(env).status:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
+    if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
     const origin=request.headers.get('origin');
     if(request.method==='POST'&&!path.startsWith('webhooks/')&&origin!==env.APP_ORIGIN)fail(403,'This request must come from LocHire.');
     if(Number(request.headers.get('content-length')||0)>16000)fail(413,'Request is too large.');
+    if(path==='webhooks/paystack'&&request.method==='POST'){const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');return send(await paystackWebhook(db,request,raw,env));}
+    if(live(env)&&path.startsWith('webhooks/wema/'))fail(503,'This bank integration has been retired.');
     let body={};
     if(request.method==='POST') {const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');try{body=JSON.parse(raw||'{}');}catch{fail(400,'Invalid JSON request.');}if(!body||Array.isArray(body)||typeof body!=='object')fail(400,'Invalid request body.');}
     await limit(db,request.headers.get('x-lochire-client-ip')||'unknown',120);
@@ -381,7 +382,8 @@ export async function handleRequest(request,env) {
     if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
     if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path}));
     if(['auth/password','auth/verification/request'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
-    if(live(env)&&path.startsWith('wema/')&&(!bankReadiness(env).ready||env.WEMA_ENVIRONMENT!=='production'||path.includes('/demo/')))fail(503,'Bank deposits and withdrawals are not activated.');
+    if(live(env)&&path.startsWith('wema/'))fail(503,'This bank integration has been retired.');
+    if(path.startsWith('payments/')){await limit(db,'payments:'+user.id,20);return send(await paymentAction({db,user,env,request,body,path,passwordHash}));}
     if(path==='postcode/lookup'&&request.method==='POST') {
       if(body.consent!==true)fail(400,'Approve sending this postcode to NIPOST before checking it.');
       await limit(db,`postcode:${user.id}`,10);
@@ -413,7 +415,7 @@ export async function handleRequest(request,env) {
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
+    response=send({error:error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
   }
   return response;
 }

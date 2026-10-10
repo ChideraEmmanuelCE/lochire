@@ -21,6 +21,12 @@ The browser calls same-origin `/api/` routes. Vercel forwards them to the privat
 | `hiring/blocks` | POST | Account-owned profile blocks or unblocks another profile |
 | `hiring/reports` | POST | Privately save a report with target, kind, reason and details |
 | `hiring/notifications` | POST | Mark the signed-in account's notifications read |
+| `payments/banks` | GET | Authenticated provider-supported Nigerian bank list |
+| `payments/bank/resolve` | POST | Consent, bank code, account number; returns a private confirmation token |
+| `payments/bank/save` | POST | Confirmation token, password and consent; creates private worker subaccount |
+| `payments/checkout` | POST | Hirer-only agreed work/version/period; server-owned amount and recipient |
+| `payments/verify` | POST | Participant-only authoritative verification of a saved reference |
+| `webhooks/paystack` | POST | Raw-body SHA-512 signature validation, then provider verification |
 | `wallet/role` | POST | Change active worker / hirer mode without changing account |
 | `wallet` | GET | Production summary; no historical test-money balance |
 | `admin/reports` | GET / POST | Verified administrator queue and recorded moderation resolution |
@@ -31,4 +37,4 @@ Direct-payment records have `reported`, `acknowledged` or `disputed` status. Onl
 
 Public discovery removes phone, email, exact coordinates and postcodes. Optional transient `lat` and `lon` query parameters return coarse worker distances; they are not saved as the visitor's location. Exact worker snapshots expire for discovery after 24 hours.
 
-Production rejects `sandbox/*`, simulated Wema routes and bank operations without confirmed production configuration. Existing bank adapters remain behind the production gate. Keep provider keys exclusively in private runtime settings.
+Production rejects test-money funding and retired bank routes. `hiring/state` also returns `provider`, owner-only masked `bank` and participant-only `onlinePayments`; anonymous responses contain no bank or payment details. Online charge success and participant-acknowledged direct payments remain separate. No stored-value wallet is created. See `PROVIDER_SETUP.md` for activation and settlement/fee details.

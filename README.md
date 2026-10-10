@@ -15,11 +15,13 @@ LocHire is now an authenticated hiring platform. Profiles, openings, invitations
 5. Each participant confirms completion. Reviews become available only after both confirm.
 6. A hirer can declare a direct cash or bank-transfer payment. Only the worker can acknowledge receipt or dispute that record. Acknowledged earnings are not a spendable wallet balance.
 
-Worker mode has no deposit feature. Switching roles retains the account and keeps an open wallet page visible.
+Workers connect their bank account in Payments. Hirers pay the agreed price using hosted checkout; Paystack handles settlement to the worker. Cash and direct-transfer records remain available separately. The footer is removed; Account contains Help, Privacy and guidance.
 
-## What needs activation
+## Payment activation
 
-**Wema deposits, card payments, bank transfers initiated by LocHire and withdrawals remain disabled.** Production rejects all test-money and simulated bank actions, including direct API requests. No application balance is converted into real bank money. Final bank activation requires approved product access, contracts, callback security, status verification and payout integration, a matching bank UI and approved end-to-end bank testing. See `docs/WEMA-INTEGRATION.md` for the retained adapter references. Do not enable Wema with an unverified key or guessed endpoint.
+Paystack replaces the previous bank-specific integration. Hosted checkout, private bank-account confirmation/subaccounts, durable payment attempts, participant status checks and signed webhooks are implemented. Production money movement remains unavailable until the owner's activated Paystack account and live secret are configured and actual provider tests are completed. See `docs/PROVIDER_SETUP.md` for the exact setup.
+
+The app offers direct bank settlement rather than a stored-value wallet. Platform share is currently zero; processing fees are deducted from the worker's settlement. Paid status confirms the charge, not bank receipt. Refunds and ambiguous provider-request recovery currently use merchant support/dashboard operations.
 
 **Email verification and password recovery need `RESEND_API_KEY` and a verified `EMAIL_FROM` in private backend runtime settings.** The app reports missing delivery instead of claiming an email was sent. In-app notifications and authenticated password changes already work. Password changes revoke all sessions. Email notifications for hiring events are not currently sent.
 
@@ -37,9 +39,9 @@ The Vercel frontend calls the same-origin `api/gateway.js`. The gateway forwards
 
 Frontend project: `lochire`, team `RIDEA`, domain `lochire.vercel.app`, repository `ChideraEmmanuelCE/lochire`.
 
-Backend identity is preserved in `payment-backend/.openai/hosting.json`. A frontend GitHub push does not publish the backend. Backend changes must also pass the Sites source, build, save and deploy workflow. Migration 0008 adds the live schema without changing applied migrations or erasing historical data.
+Backend identity is preserved in `payment-backend/.openai/hosting.json`. A frontend GitHub push does not publish the backend. Backend changes must also pass the Sites source, build, save and deploy workflow. Migrations 0008–0009 add the live hiring and Paystack schema without changing applied migrations or erasing historical data.
 
-Runtime: `APP_MODE=production`, `PAYMENT_MODE=live`, `WEMA_MODE=live`, `WEMA_ENVIRONMENT=production`, `WEMA_ENABLED=false`. Gateway credentials and the backend's `SERVICE_SECRET` remain private.
+Runtime: `APP_MODE=production`, `PAYMENT_MODE=live`, `PAYSTACK_MODE=live`, `PAYSTACK_ENABLED=false` until activation. Gateway credentials and the backend's `SERVICE_SECRET` remain private.
 
 ## Development checks
 

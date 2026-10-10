@@ -125,3 +125,13 @@ export const liveAccountSettings = sqliteTable('live_account_settings', {
 export const liveEmailTokens = sqliteTable('live_email_tokens', {
   id:text('id').primaryKey(),hash:text('hash').notNull().unique(),userId:text('user_id').notNull().references(()=>users.id),purpose:text('purpose').notNull(),expiresAt:integer('expires_at').notNull(),usedAt:text('used_at'),
 });
+
+export const paystackDestinations = sqliteTable('paystack_destinations', {
+ id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),workerId:text('worker_id').notNull().references(()=>liveProfiles.id),mode:text('mode').notNull(),bankName:text('bank_name').notNull(),accountName:text('account_name').notNull(),last4:text('last4').notNull(),subaccount:text('subaccount'),status:text('status').notNull(),claim:text('claim'),createdAt:text('created_at').notNull(),
+});
+export const paystackPayments = sqliteTable('paystack_payments', {
+ reference:text('reference').primaryKey(),engagementId:text('engagement_id').notNull().references(()=>liveEngagements.id),payer:text('payer').notNull().references(()=>liveProfiles.id),recipient:text('recipient').notNull().references(()=>liveProfiles.id),amount:integer('amount').notNull(),mode:text('mode').notNull(),termsVersion:integer('terms_version').notNull(),period:text('period').notNull(),subaccount:text('subaccount').notNull(),status:text('status').notNull(),checkoutUrl:text('checkout_url'),createdAt:text('created_at').notNull(),paidAt:text('paid_at'),fees:integer('fees'),claim:text('claim').notNull(),
+},t=>[uniqueIndex('paystack_work_period').on(t.engagementId,t.termsVersion,t.period,t.mode),check('paystack_positive_amount',sql`${t.amount} >= 10000`)]);
+export const paystackBankTokens = sqliteTable('paystack_bank_tokens', {
+ hash:text('hash').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),bankCode:text('bank_code').notNull(),accountNumber:text('account_number').notNull(),accountName:text('account_name').notNull(),bankName:text('bank_name').notNull(),mode:text('mode').notNull(),expiresAt:integer('expires_at').notNull(),
+});

@@ -1,27 +1,23 @@
-# LocHire live service
+# LocHire private service
 
-LocHire's private API serves the public app at https://lochire.vercel.app.
+The private backend serves https://lochire.vercel.app through its authenticated Vercel gateway. It persists accounts, worker/hirer profiles, jobs, conversations, agreements, completion, reviews, reports, notifications, cash/transfer acknowledgements and Paystack checkout attempts in D1.
 
-The hiring platform now uses authenticated, shared D1 records for profiles, openings, conversations, agreed work, completion, reviews, in-app notifications, reports and participant-acknowledged direct payments. Browser-local hiring examples are not imported into live listings.
+## Payments
 
-## Production configuration
+Paystack hosted checkout uses a worker subaccount to settle proceeds directly to the worker's connected supported Nigerian bank. A worker confirms the resolved bank name, account ownership, consent to settlement and current LocHire password before connecting it. Full account numbers are never published; durable destination records contain only the bank, name, masked suffix and provider reference.
 
-- `APP_MODE=production`, `PAYMENT_MODE=live`, `WEMA_MODE=live`, `WEMA_ENVIRONMENT=production`.
-- Keep `WEMA_ENABLED=false` until the subscribed product contracts and production credentials have been confirmed. Test-money funding, withdrawals and bank simulations are blocked at the service boundary in production.
-- Keep the existing `SERVICE_SECRET`, `APP_ORIGIN` and private Site audience. Gateway credentials remain server-only.
-- `ADMIN_EMAILS` identifies permitted administrator email addresses. Email-based admin access also requires verification. Alternatively configure `ADMIN_USER_IDS` only for owner-verified existing account IDs through private runtime settings; registration alone does not grant administration.
-- Email verification and recovery require secret `RESEND_API_KEY` and verified `EMAIL_FROM`. Without them, the API explicitly reports that email delivery is unavailable. Signed-in password changes already work and revoke all sessions.
+Every checkout uses a server-owned amount/recipient/reference tied to the work, terms version and payment period. The hirer must review the confirmed amount. Verification checks the provider's reference, amount, currency, mode and subaccount. Webhooks require the exact raw payload's HMAC SHA-512 signature and trigger authoritative read-back. Repeated requests/events cannot duplicate the record. Timeouts retain the saved reference for support reconciliation.
 
-## Data and safety
+Paystack success confirms a charge, not bank settlement or receipt. Platform share is zero; provider fees are deducted from the worker's settlement and disclosed in the UI. Cash/direct-transfer declarations are separate, participant-acknowledged records. No stored-value wallet, escrow, top-ups or manual withdrawals are provided. Refund initiation and admin recovery of ambiguous provider requests currently require merchant support/dashboard operations.
 
-Migration 0008 adds the live hiring tables without rewriting applied migrations or erasing test history. Historical test balances are retained privately and cannot become spendable production funds. Live wallet summaries hide test balances and simulation transactions.
+## Configuration and activation
 
-Profile ownership derives from the session. Only participants can access and change conversations or payment declarations. Revision checks reject stale edits. Both sides confirm the current work version and completion before reviews. Only the receiving worker can acknowledge a payment. These declarations are not bank verification, custody, escrow or withdrawable balances.
+Production uses `APP_MODE=production`, `PAYMENT_MODE=live`, `PAYSTACK_MODE=live`. Keep `PAYSTACK_ENABLED=false` until the owner completes provider account activation, confirms marketplace subaccount eligibility and configures a live `PAYSTACK_SECRET_KEY` as a private secret. Production refuses test keys or mode. Configure the webhook at https://lochire.vercel.app/api/webhooks/paystack. No public key or separate webhook secret is needed for this hosted integration.
 
-Exact locations and account contacts stay private. Discovery returns coarse distance, and shared location expires after 24 hours. Private postcodes appear to workers after invitation acceptance. Reports are stored privately; verified administrators can resolve them and suspend reported profiles. Suspended profiles cannot republish themselves.
+Keep the existing service secret, app origin, DB binding and owner-private audience. Authenticated account verification/reset email needs a secret Resend key and verified sender. Administrators require verified allowlisted email or a privately approved existing account ID.
 
-## Checks and publication
+Migration 0009 adds Paystack destination, payment and temporary bank-verification tables. Applied migrations and historical records remain unchanged. Retired bank and test-money routes are blocked in production, and historical simulation balances cannot become live money.
 
-Run `node --test tests/*.test.mjs` and build through the Sites helper. Publish from the existing Site identity in `.openai/hosting.json`; preserve the `DB` binding and owner-private audience. Update the corresponding backend source snapshot in `ChideraEmmanuelCE/lochire` together with a backend publication. A GitHub frontend push does not deploy this backend.
+## Checks and deployment
 
-The current production frontend deliberately keeps Wema deposits and withdrawals unavailable. Final bank activation also needs the real payout contract and a matching frontend bank flow, followed by approved bank end-to-end testing. No real Wema calls have been verified yet.
+Run `node --test tests/*.test.mjs` and build/package through the Sites source helper. Preserve `.openai/hosting.json` identity and `DB`. The GitHub `payment-backend` directory is a source snapshot; a frontend push does not deploy this service. Publish the backend through Sites separately. Provider tests currently use deterministic mock responses; actual Paystack end-to-end verification needs owner credentials and approved test/live transactions.

@@ -94,3 +94,10 @@ test('malformed rewrites cannot select another origin or traverse backend routes
   }
   assert.equal(forwarded.length, 0);
 });
+
+
+test('Paystack webhook forwards the exact raw payload and signature without reserializing it',async()=>{
+ const {Readable}=require('node:stream');const raw='{ "event": "charge.success", "data": {"reference":"fixture"} }';
+ const req=Readable.from([Buffer.from(raw)]);Object.assign(req,{method:'POST',url:'/api/webhooks/paystack',headers:{'x-paystack-signature':'a'.repeat(128)},body:{event:'do-not-read-parsed-body'}});
+ const response=await invoke({...req,[Symbol.asyncIterator]:req[Symbol.asyncIterator].bind(req)});assert.equal(response.statusCode,200);assert.equal(forwarded[0].options.body,raw);assert.equal(forwarded[0].options.headers['x-paystack-signature'],'a'.repeat(128));
+});
