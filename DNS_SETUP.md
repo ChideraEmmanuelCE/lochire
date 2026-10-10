@@ -20,12 +20,12 @@ Full DKIM TXT value (one record, one continuous value):
 p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDBfxPqhiDzhUyx4QkPYzhFIkPZIFBYHT1pY91NyJnbvImgH/3XhvK5+Cqtgf70Jme5DuWf7E0MvnaBN3kirN985EGTvHYdk4mIUmSDQxj1nksEjfZ1WpO3G/7Urag/BWRvN6j43pOWtJVCY2BKs12X6L9Kwpbia5FZjZBQ8KwegwIDAQAB
 ```
 
-Resend domain: https://resend.com/domains/add/7e6f8719-9088-4986-bc91-c7c27d925e01
+Resend domain: https://resend.com/domains/7e6f8719-9088-4986-bc91-c7c27d925e01
 
 After DNS is saved:
 
 1. Check the records and HTTPS at lochire.ng and www.lochire.ng.
-2. Press “I've added the records” in Resend and wait for Verified sending.
+2. Press “Verify DNS Records” in Resend and wait for Verified sending.
 3. Set backend EMAIL_FROM to `LocHire <accounts@lochire.ng>`, EMAIL_MODE to `production`, APP_ORIGIN to `https://lochire.ng`, and ALLOWED_APP_ORIGINS to `https://lochire.vercel.app`. Remove EMAIL_TEST_RECIPIENT and redeploy the saved backend version.
 4. Set the Vercel production APP_ORIGIN to `https://lochire.ng` and ALLOWED_APP_ORIGINS to `https://lochire.vercel.app`, then rebuild the frontend. This keeps both addresses usable while email links use the new domain.
 5. Confirm a real verification and reset email arrives from the verified sender. Current test sending remains owner-only until verification is complete.
