@@ -100,3 +100,10 @@ test('password changes revoke sessions; missing email delivery does not claim su
   assert.equal((await h.call('auth/password',{currentPassword:'SecureFixturePassword123!',password:'NewSecurePassword123!'},u)).status,200);
   assert.equal((await h.call('wallet',undefined,u)).status,401);assert.equal((await h.call('auth/login',{email:'password@example.test',password:'NewSecurePassword123!'})).status,200);
 });
+
+test('custom domain recovery accepts only the exact configured origins',async()=>{
+ const h=harness();h.env.ALLOWED_APP_ORIGINS='https://lochire.ng';
+ assert.equal((await h.call('auth/forgot',{email:'missing@example.test'},null,{origin:'https://lochire.ng'})).status,200);
+ assert.equal((await h.call('auth/forgot',{email:'missing@example.test'},null,{origin:h.env.APP_ORIGIN})).status,200);
+ for(const origin of ['https://lochire.ng.evil.test','http://lochire.ng','null'])assert.equal((await h.call('auth/forgot',{email:'missing@example.test'},null,{origin})).status,403);
+});

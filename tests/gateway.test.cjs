@@ -101,3 +101,13 @@ test('Paystack webhook forwards the exact raw payload and signature without rese
  const req=Readable.from([Buffer.from(raw)]);Object.assign(req,{method:'POST',url:'/api/webhooks/paystack',headers:{'x-paystack-signature':'a'.repeat(128)},body:{event:'do-not-read-parsed-body'}});
  const response=await invoke({...req,[Symbol.asyncIterator]:req[Symbol.asyncIterator].bind(req)});assert.equal(response.statusCode,200);assert.equal(forwarded[0].options.body,raw);assert.equal(forwarded[0].options.headers['x-paystack-signature'],'a'.repeat(128));
 });
+
+test('custom domain mutations require an exact configured origin and preserve it for the backend',async()=>{
+ process.env.ALLOWED_APP_ORIGINS='https://lochire.ng';
+ const accepted=await invoke({method:'POST',query:{path:'auth/forgot'},headers:{origin:'https://lochire.ng'},body:{email:'owner@example.test'}});
+ assert.equal(accepted.statusCode,200);assert.equal(forwarded[0].options.headers.origin,'https://lochire.ng');
+ for(const origin of ['https://lochire.ng.evil.test','http://lochire.ng',undefined]){
+  const rejected=await invoke({method:'POST',query:{path:'auth/forgot'},headers:{origin},body:{email:'owner@example.test'}});assert.equal(rejected.statusCode,403);
+ }
+ assert.equal(forwarded.length,1);
+});

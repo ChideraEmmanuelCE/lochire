@@ -337,8 +337,8 @@ export async function handleRequest(request,env) {
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
-    const origin=request.headers.get('origin');
-    if(request.method==='POST'&&!path.startsWith('webhooks/')&&origin!==env.APP_ORIGIN)fail(403,'This request must come from LocHire.');
+    const origin=request.headers.get('origin'),allowedOrigins=new Set([env.APP_ORIGIN,...String(env.ALLOWED_APP_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean)]);
+    if(request.method==='POST'&&!path.startsWith('webhooks/')&&!allowedOrigins.has(origin))fail(403,'This request must come from LocHire.');
     if(Number(request.headers.get('content-length')||0)>16000)fail(413,'Request is too large.');
     if(path==='webhooks/paystack'&&request.method==='POST'){const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');return send(await paystackWebhook(db,request,raw,env));}
     if(live(env)&&path.startsWith('webhooks/wema/'))fail(503,'This bank integration has been retired.');
@@ -382,7 +382,7 @@ export async function handleRequest(request,env) {
       return send({ok:true},200,{'Set-Cookie':'lh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'});
     }
     const user=await session(db,request);
-    if(live(env)&&emailReady(env)&&request.method==='POST'&&(path.startsWith('hiring/')||path.startsWith('payments/'))&&!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at)fail(403,'Verify your email before creating a profile, arranging work or making payments.');
+    if(live(env)&&emailReady(env,user.email)&&request.method==='POST'&&(path.startsWith('hiring/')||path.startsWith('payments/'))&&!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at)fail(403,'Verify your email before creating a profile, arranging work or making payments.');
     if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
     if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path}));
     if(['auth/password','auth/verification/request'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}

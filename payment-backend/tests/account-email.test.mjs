@@ -29,3 +29,12 @@ test('expired reset links fail and changing a password invalidates outstanding r
 test('mail failures keep the created account recoverable without leaving usable unmailed tokens',async()=>{
  const original=global.fetch;global.fetch=async()=>{throw Error('Provider unavailable, re_fixture_private');};try{const h=fixture(),r=await h.register();assert.equal(r.status,201);assert.equal(r.data.verificationEmail.ok,false);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM live_email_tokens').get().n,0);assert.doesNotMatch(JSON.stringify(r.data),/re_fixture_private/);assert.equal((await h.call('auth/login',{email:'owner@example.test',password:'SecureFixturePassword123!'})).status,200);const found=await h.call('auth/forgot',{email:'owner@example.test'}),unknown=await h.call('auth/forgot',{email:'missing@example.test'});assert.deepEqual(found.data,unknown.data);h.sqlite.close();}finally{global.fetch=original;}
 });
+
+test('test sender emails only its allowed account and keeps recovery answers generic',()=>withMail(async mails=>{
+ const h=fixture();h.env.EMAIL_MODE='test';h.env.EMAIL_TEST_RECIPIENT='owner@example.test';
+ const owner=await h.register(),other=await h.register('other@example.test');
+ assert.equal(owner.data.verificationRequired,true);assert.equal(other.data.verificationRequired,false);assert.equal(other.data.emailReady,false);assert.equal(mails.length,1);
+ const found=await h.call('auth/forgot',{email:'owner@example.test'}),blocked=await h.call('auth/forgot',{email:'other@example.test'}),unknown=await h.call('auth/forgot',{email:'missing@example.test'});
+ assert.deepEqual(found.data,blocked.data);assert.deepEqual(found.data,unknown.data);assert.equal(mails.length,2);assert.ok(mails.every(m=>m.to[0]==='owner@example.test'));
+ const profile=await h.call('hiring/profiles/employer',{name:'Owner',city:'Ibadan',area:'Jericho',type:'Household',intro:'Looking for household help',business:''},other.cookie);assert.equal(profile.status,200);h.sqlite.close();
+}));

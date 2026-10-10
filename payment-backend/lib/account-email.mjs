@@ -3,10 +3,11 @@ const enc=new TextEncoder();
 const hex=b=>Array.from(new Uint8Array(b),n=>n.toString(16).padStart(2,'0')).join('');
 const digest=async s=>hex(await crypto.subtle.digest('SHA-256',enc.encode(s)));
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export const emailReady=env=>!!env.RESEND_API_KEY&&!!env.EMAIL_FROM;
+export const emailReady=(env,email)=>!!env.RESEND_API_KEY&&!!env.EMAIL_FROM&&(env.EMAIL_MODE!=='test'||(!!env.EMAIL_TEST_RECIPIENT&&String(email||'').toLowerCase()===env.EMAIL_TEST_RECIPIENT.trim().toLowerCase()));
 const generic='If this address has an account, a reset email has been requested. Check your inbox and spam folder.';
 export async function requestAccountEmail(db,env,user,purpose){
- if(!emailReady(env))return {ok:false,deliveryConfigured:false,message:'Email sending is awaiting activation. You can change your password with your current password in Account settings.'};
+ if(env.EMAIL_MODE==='test'&&purpose==='reset'&&!!env.RESEND_API_KEY&&!!env.EMAIL_FROM&&(!user||!emailReady(env,user.email)))return {ok:true,deliveryConfigured:true,message:generic};
+ if(!emailReady(env,user?.email))return {ok:false,deliveryConfigured:false,message:'Email sending is awaiting activation. You can change your password with your current password in Account settings.'};
  if(!user)return {ok:true,deliveryConfigured:true,message:generic};
  if(purpose==='verify'&&(await db.prepare('SELECT email_verified_at FROM live_account_settings WHERE user_id=?').bind(user.id).first())?.email_verified_at)return {ok:true,alreadyVerified:true,deliveryConfigured:true,message:'Your email is already verified.'};
  const now=Date.now(),recent=await db.prepare('SELECT id FROM live_email_tokens WHERE user_id=? AND purpose=? AND expires_at>? AND used_at IS NULL LIMIT 1').bind(user.id,purpose,now+3540000).first();

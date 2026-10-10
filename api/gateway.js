@@ -20,10 +20,10 @@ module.exports = async function handler(req,res) {
     }
     url.searchParams.delete('path');
     if(!url.pathname.startsWith('/api/')||url.pathname.includes('..'))return res.status(400).json({error:'Invalid API route.'});
-    const origin=process.env.APP_ORIGIN||'https://lochire.vercel.app';
+    const origin=process.env.APP_ORIGIN||'https://lochire.vercel.app',allowedOrigins=new Set([origin,...String(process.env.ALLOWED_APP_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean)]);
     const paystackWebhook=url.pathname==='/api/webhooks/paystack';
     const webhook=paystackWebhook||url.pathname.startsWith('/api/webhooks/wema/');
-    if(req.method==='POST'&&!webhook&&req.headers.origin!==origin)return res.status(403).json({error:'This request must come from LocHire.'});
+    if(req.method==='POST'&&!webhook&&!allowedOrigins.has(req.headers.origin))return res.status(403).json({error:'This request must come from LocHire.'});
     const headers={'Accept':'application/json','Content-Type':'application/json','x-lochire-service-key':service,'OAI-Sites-Authorization':'Bearer '+bypass};
     for(const name of ['idempotency-key','x-wema-callback-token','x-paystack-signature','origin'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];
     const sessionCookie=req.headers.cookie?.match(/(?:^|;\s*)(lh_session=[^;]+)/)?.[1];
