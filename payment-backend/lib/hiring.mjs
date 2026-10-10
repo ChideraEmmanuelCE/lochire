@@ -1,6 +1,7 @@
 import { emailReady, requestAccountEmail } from './account-email.mjs';
 export { emailReady } from './account-email.mjs';
 import { onlineState } from './paystack.mjs';
+import { adminOverview } from './admin-overview.mjs';
 // Shared, authenticated hiring. The browser can request an action; only this
 // service decides ownership, participants, publication and transitions.
 export class HiringError extends Error { constructor(status,message){super(message);this.status=status;} }
@@ -179,6 +180,8 @@ export async function hiringAction({db,user,env,request,body,path}){
 
 export async function adminRoute({db,user,env,request,body,path}){
   if(!await admin(db,user,env))fail(403,'Administrator access is required.');
+  if(path==='admin/dashboard'&&request.method==='GET')return adminOverview(db,request);
+  if(path!=='admin/reports')fail(404,'Admin route not found.');
   if(request.method==='GET')return {reports:await all(db,'SELECT id,target,kind,reason,details,status,resolution,created_at FROM live_reports ORDER BY created_at DESC LIMIT 250'),counts:{accounts:(await first(db,'SELECT COUNT(*) AS n FROM users')).n,profiles:(await first(db,'SELECT COUNT(*) AS n FROM live_profiles')).n,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n}};
   const rid=text(body.id,'report ID',100),r=await first(db,'SELECT * FROM live_reports WHERE id=?',rid);if(!r)fail(404,'Report not found.');
   const resolution=text(body.resolution,'resolution',1500);

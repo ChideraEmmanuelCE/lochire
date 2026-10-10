@@ -30,6 +30,19 @@
           "value": "no-cache"
         }
       ]
+    },
+    {
+      "source": "/admin",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
     }
   ],
   "buildCommand": "npm run build",
@@ -38,6 +51,10 @@
     {
       "source": "/api/:path*",
       "destination": "/api/gateway"
+    },
+    {
+      "source": "/admin",
+      "destination": "/index.html"
     }
   ],
   "functions": {

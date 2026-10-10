@@ -19,7 +19,7 @@ async function fixture(extraEnv={}){
     let dark=!!options.dark;const listeners=[];w.matchMedia=()=>({get matches(){return dark;},addEventListener:(event,fn)=>listeners.push(fn)});if(options.theme)w.localStorage.setItem('lochire-theme',options.theme);w.eval(fs.readFileSync(path.join(root,'theme.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'live-domain.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'app.js'),'utf8'));
     return {w,calls,deviceTheme(value){dark=value;listeners.forEach(fn=>fn());},close:()=>dom.window.close()};
   }
-  return {browser,errors};
+  return {browser,errors,sqlite};
 }
 async function click(b,selector){const el=b.w.document.querySelector(selector);assert.ok(el,selector+' missing');el.click();await tick();}
 function fill(b,values){for(const [name,value]of Object.entries(values)){const active=b.w.document.querySelector("dialog[open] form")||b.w.document.querySelector("main form");const el=active?.querySelector(`[name="${name}"]`);assert.ok(el,name+' missing');if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new b.w.Event('change',{bubbles:true}));}}
@@ -82,4 +82,26 @@ test('signup requests verification, reveals its next step, and resumes profile c
 test('reset links let a signed-out user choose a password and return to sign-in',async()=>{
  const original=global.fetch,mails=[];global.fetch=async(url,opts)=>{mails.push(JSON.parse(opts.body));return Response.json({id:'email-'+mails.length});};
  const f=await fixture({RESEND_API_KEY:'re_fixture',EMAIL_FROM:'LocHire <accounts@verified.example>'}),b=f.browser();try{await tick();await click(b,'#account-button');await click(b,'[data-page="account"]');await click(b,'[data-action="auth-register"]');fill(b,{name:'Reset worker',email:'reset@example.test',phone:'08012345678',password:'SecureFixturePassword123!',termsConsent:true});await submit(b,'auth-form');await click(b,'[data-action="logout"]');await click(b,'#account-button');await click(b,'[data-page="account"]');await click(b,'[data-action="auth-forgot"]');fill(b,{email:'reset@example.test'});await submit(b,'auth-form');assert.match(b.w.document.querySelector('#auth-status').textContent,/Check your inbox/);await click(b,'[data-action="close"]');const token=mails[1].text.match(/\/#reset\/([a-f0-9]{64})/)[1];b.w.location.hash='#reset/'+token;await tick();fill(b,{password:'ResetNewPassword123!',confirmPassword:'ResetNewPassword123!'});await submit(b,'reset-form');assert.ok(b.w.document.querySelector('dialog[open] #auth-form'));fill(b,{email:'reset@example.test',password:'ResetNewPassword123!'});await submit(b,'auth-form');assert.equal(b.w.location.hash,'#check-email');assert.equal(f.errors.length,0);}finally{b.close();global.fetch=original;}
+});
+
+
+test('owner dashboard loads real counts, filters users and hides access from other accounts',async()=>{
+  const f=await fixture({ADMIN_EMAILS:'owner@example.test'}),owner=f.browser(),member=f.browser();
+  try{
+    await tick();await register(owner,'owner');await register(member,'member');
+    owner.w.location.hash='#admin';await tick();assert.match(owner.w.document.querySelector('main').textContent,/Verify the owner account email/);assert.equal(owner.w.document.querySelector('#admin-users-form'),null);
+    const id=f.sqlite.prepare('SELECT id FROM users WHERE email=?').get('owner@example.test').id;
+    f.sqlite.prepare('INSERT INTO live_account_settings (user_id,email_verified_at) VALUES (?,?)').run(id,new Date().toISOString());
+    owner.w.dispatchEvent(new owner.w.Event('focus'));await tick();await tick();
+    assert.equal(owner.w.document.querySelector('.admin-metric strong').textContent,'2');assert.ok(owner.w.document.querySelector('.admin-chart'));assert.equal(owner.w.document.querySelectorAll('.admin-user').length,2);
+    fill(owner,{q:'member',verified:''});await submit(owner,'admin-users-form');assert.equal(owner.w.document.querySelectorAll('.admin-user').length,1);assert.match(owner.w.document.querySelector('.admin-user').textContent,/member@example.test/);
+    fill(owner,{q:'',verified:'yes'});await submit(owner,'admin-users-form');assert.equal(owner.w.document.querySelectorAll('.admin-user').length,1);assert.match(owner.w.document.querySelector('.admin-user').textContent,/owner@example.test/);
+    member.w.location.hash='#admin';await tick();assert.match(member.w.document.querySelector('main').textContent,/Administrator access required/);assert.equal(member.w.document.querySelector('#admin-users-form'),null);
+    assert.equal(f.errors.length,0);
+  }finally{owner.close();member.close();}
+});
+test('admin URL has a signed-out sign-in flow and returns to the dashboard after owner login',async()=>{
+  const f=await fixture(),b=f.browser();try{
+    b.w.history.replaceState(null,'','/admin');b.w.dispatchEvent(new b.w.HashChangeEvent('hashchange'));await tick();assert.match(b.w.document.querySelector('main').textContent,/Admin dashboard/);assert.ok(b.w.document.querySelector('[data-action="admin-login"]'));await click(b,'[data-action="admin-login"]');assert.ok(b.w.document.querySelector('#auth-form'));
+  }finally{b.close();}
 });
