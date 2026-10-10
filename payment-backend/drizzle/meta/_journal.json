@@ -71,6 +71,13 @@
       "when": 1791623086002,
       "tag": "0009_common_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791627016282,
+      "tag": "0010_owner_test_reset",
+      "breakpoints": true
     }
   ]
 }

@@ -59,3 +59,7 @@ A static file server can preview the layout but cannot run accounts. Use the con
 ## Appearance and mobile layout
 
 The Android-first interface uses four bottom tabs and a More menu for Payments, Settings and Account. Settings offers Light, Dark and Device appearance; the browser saves the selection and applies it before styles load. Filters, optional profile details, bank setup and payment histories expand on demand. Work agreements remain visible before confirmation. The logo asset is unchanged. Touch controls, safe-area spacing and reduced-motion support are included. No remote fonts or animated decoration are loaded.
+
+## Passwords and email verification
+
+More → Settings → Password & security offers current-password changes and email recovery. Account shows verification status and resend. With the backend email provider configured, signup requests a verification email and pauses profile creation until verification. Email links return to LocHire with a one-hour, single-use token; verification resumes the next step and password reset returns to sign-in. Configure the backend `RESEND_API_KEY` secret and verified `EMAIL_FROM` sender before testing actual email delivery.

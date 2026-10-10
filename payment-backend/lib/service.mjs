@@ -1,3 +1,4 @@
+import { requestAccountEmail } from './account-email.mjs';
 import { PaystackError, paymentReadiness, onlineState, paymentAction, paystackWebhook } from './paystack.mjs';
 import { HiringError, live, emailReady, hiringState, hiringAction, adminRoute, accountRoute } from './hiring.mjs';
 import { demoMode } from './bank-mode.mjs';
@@ -371,7 +372,9 @@ export async function handleRequest(request,env) {
         if(!user||!equal(hash,user.password_hash))fail(401,'Email or password is incorrect.');
       }
       const token=await newSession(db,user.id);
-      return send(await summary(db,user,env),path==='auth/register'?201:200,{'Set-Cookie':sessionCookie(token,env.APP_ORIGIN?.startsWith('https:'))});
+      const verificationEmail=path==='auth/register'&&live(env)?await requestAccountEmail(db,env,user,'verify'):null;
+      const result=live(env)?await hiringState(db,user,env,request):await summary(db,user,env);
+      return send({...result,...(verificationEmail?{verificationEmail}:{})},path==='auth/register'?201:200,{'Set-Cookie':sessionCookie(token,env.APP_ORIGIN?.startsWith('https:'))});
     }
     if(path==='auth/logout'&&request.method==='POST') {
       const token=request.headers.get('cookie')?.match(/(?:^|;\s*)lh_session=([^;]+)/)?.[1];
@@ -379,6 +382,7 @@ export async function handleRequest(request,env) {
       return send({ok:true},200,{'Set-Cookie':'lh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'});
     }
     const user=await session(db,request);
+    if(live(env)&&emailReady(env)&&request.method==='POST'&&(path.startsWith('hiring/')||path.startsWith('payments/'))&&!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at)fail(403,'Verify your email before creating a profile, arranging work or making payments.');
     if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
     if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path}));
     if(['auth/password','auth/verification/request'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}

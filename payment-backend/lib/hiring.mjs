@@ -1,3 +1,5 @@
+import { emailReady, requestAccountEmail } from './account-email.mjs';
+export { emailReady } from './account-email.mjs';
 import { onlineState } from './paystack.mjs';
 // Shared, authenticated hiring. The browser can request an action; only this
 // service decides ownership, participants, publication and transitions.
@@ -21,7 +23,7 @@ const bases=['Hourly','Daily','Monthly','Per task'];
 const types=['Ongoing job','One-off task'];
 const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 export const live=env=>env.APP_MODE==='production';
-export const emailReady=env=>!!env.RESEND_API_KEY&&!!env.EMAIL_FROM;
+
 async function admin(db,user,env){if(!user)return false;if(String(env.ADMIN_USER_IDS||'').split(',').includes(user.id))return true;if(!String(env.ADMIN_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).includes(user.email))return false;return !!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at;}
 const profileId=(user,role)=>role+'-'+user.id;
 const decoded=row=>row?{...JSON.parse(row.data),id:row.id,revision:row.revision,...(row.role?{published:row.published===1,suspended:row.suspended===1}:{})}:null;
@@ -74,7 +76,7 @@ export async function hiringState(db,user,env,request){
   const reviews=await all(db,'SELECT id,engagement_id AS engagementId,author,target,rating,text,created_at AS at FROM live_reviews ORDER BY created_at DESC LIMIT 1000');
   const settings=user?await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id):null;
   const payments=user?await all(db,'SELECT p.* FROM live_payments p JOIN live_profiles a ON a.id=p.payer JOIN live_profiles b ON b.id=p.recipient WHERE a.user_id=? OR b.user_id=? ORDER BY created_at DESC LIMIT 250',user.id,user.id):[];
-  return {...await onlineState(db,user,env),version:4,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,emailVerified:!!settings?.email_verified_at}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env)};
+  return {...await onlineState(db,user,env),version:4,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,emailVerified:!!settings?.email_verified_at}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env),verificationRequired:!!user&&emailReady(env)&&!settings?.email_verified_at};
 }
 async function engagementFor(db,user,gid){const row=await first(db,'SELECT g.* FROM live_engagements g WHERE id=? AND (worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?))',gid,user.id,user.id);if(!row)fail(404,'This engagement is not available to your account.');return row;}
 async function mutate(db,row,g,target,kind,title,extra=[]){
@@ -195,17 +197,10 @@ const digest=async s=>hex(await crypto.subtle.digest('SHA-256',enc.encode(s)));
 export async function accountRoute({db,user,env,request,body,path,passwordHash}){
   if(path==='auth/forgot'||path==='auth/verification/request'){
     if(path.includes('verification')&&!user)fail(401,'Sign in first.');
-    if(!emailReady(env))return {ok:false,deliveryConfigured:false,message:'Email delivery is not connected yet. Signed-in users can change their password in Account settings.'};
     const email=path==='auth/forgot'?text(body.email,'email',254).toLowerCase():user.email;
-    const found=await first(db,'SELECT id,email FROM users WHERE email=?',email),purpose=path==='auth/forgot'?'reset':'verify';
-    if(found){
-      const token=hex(crypto.getRandomValues(new Uint8Array(32))),tid=id('TOKEN');
-      await run(db,'INSERT INTO live_email_tokens (id,hash,user_id,purpose,expires_at) VALUES (?,?,?,?,?)',tid,await digest(token),found.id,purpose,Date.now()+3600000);
-      const link=env.APP_ORIGIN+'/#'+(purpose==='reset'?'reset':'verify')+'/'+token;
-      const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+env.RESEND_API_KEY,'Content-Type':'application/json','Idempotency-Key':tid},body:JSON.stringify({from:env.EMAIL_FROM,to:found.email,subject:purpose==='reset'?'Reset your LocHire password':'Verify your LocHire email',text:'Open this link within one hour: '+link+'\nIf you did not request this, you can ignore it.'}),signal:AbortSignal.timeout(10000)});
-      if(!response.ok){await run(db,'DELETE FROM live_email_tokens WHERE id=?',tid);fail(503,'Email delivery is temporarily unavailable. Please try again.');}
-    }
-    return {ok:true,message:'If this address has an account, an email has been requested. Check your inbox.'};
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid email address.');
+    const found=await first(db,'SELECT id,email FROM users WHERE email=?',email);
+    return requestAccountEmail(db,env,found,path==='auth/forgot'?'reset':'verify');
   }
   if(path==='auth/reset'||path==='auth/verify'){
     if(typeof body.token!=='string'||!/^[a-f0-9]{64}$/.test(body.token))fail(400,'Invalid or expired link.');
@@ -213,16 +208,16 @@ export async function accountRoute({db,user,env,request,body,path,passwordHash})
     const at=now()+'-'+crypto.randomUUID(),statements=[db.prepare('UPDATE live_email_tokens SET used_at=? WHERE id=? AND used_at IS NULL').bind(at,token.id)];
     if(purpose==='reset'){
       const password=text(body.password,'password',200,10),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hashed=await passwordHash(password,salt);
-      statements.push(db.prepare('UPDATE users SET password_hash=?,password_salt=? WHERE id=? AND EXISTS(SELECT 1 FROM live_email_tokens WHERE id=? AND used_at=?)').bind(hashed,salt,token.user_id,token.id,at),db.prepare('DELETE FROM sessions WHERE user_id=? AND EXISTS(SELECT 1 FROM live_email_tokens WHERE id=? AND used_at=?)').bind(token.user_id,token.id,at));
+      statements.push(db.prepare('UPDATE users SET password_hash=?,password_salt=? WHERE id=? AND EXISTS(SELECT 1 FROM live_email_tokens WHERE id=? AND used_at=?)').bind(hashed,salt,token.user_id,token.id,at),db.prepare('DELETE FROM sessions WHERE user_id=? AND EXISTS(SELECT 1 FROM live_email_tokens WHERE id=? AND used_at=?)').bind(token.user_id,token.id,at),db.prepare("UPDATE live_email_tokens SET used_at=? WHERE user_id=? AND purpose='reset' AND used_at IS NULL AND EXISTS(SELECT 1 FROM live_email_tokens WHERE id=? AND used_at=?)").bind(at,token.user_id,token.id,at));
     }else statements.push(db.prepare('INSERT INTO live_account_settings (user_id,email_verified_at) SELECT ?,? WHERE EXISTS(SELECT 1 FROM live_email_tokens WHERE id=? AND used_at=?) ON CONFLICT(user_id) DO UPDATE SET email_verified_at=excluded.email_verified_at').bind(token.user_id,at,token.id,at));
-    const result=await db.batch(statements);if(result[0].meta?.changes===0)fail(400,'This link has already been used.');return {ok:true,message:purpose==='reset'?'Password updated. Sign in with your new password.':'Email verified.'};
+    const result=await db.batch(statements);if(result[0].meta?.changes===0)fail(400,'This link has already been used.');return {ok:true,...(purpose==='verify'?{verifiedUserId:token.user_id}:{}),message:purpose==='reset'?'Password updated. Sign in with your new password.':'Email verified.'};
   }
   if(path==='auth/password'){
     if(!user)fail(401,'Sign in first.');
     const old=text(body.currentPassword,'current password',200,10),password=text(body.password,'new password',200,10),hash=await passwordHash(old,user.password_salt);
     if(hash!==user.password_hash)fail(401,'Current password is incorrect.');
     const salt=hex(crypto.getRandomValues(new Uint8Array(16))),hashed=await passwordHash(password,salt);
-    await db.batch([db.prepare('UPDATE users SET password_hash=?,password_salt=? WHERE id=?').bind(hashed,salt,user.id),db.prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id)]);
+    await db.batch([db.prepare('UPDATE users SET password_hash=?,password_salt=? WHERE id=?').bind(hashed,salt,user.id),db.prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id),db.prepare("UPDATE live_email_tokens SET used_at=? WHERE user_id=? AND purpose='reset' AND used_at IS NULL").bind(now(),user.id)]);
     return {ok:true,message:'Password changed. Sign in again.'};
   }
   fail(404,'Account action not found.');

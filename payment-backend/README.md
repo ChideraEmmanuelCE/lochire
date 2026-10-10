@@ -21,3 +21,11 @@ Migration 0009 adds Paystack destination, payment and temporary bank-verificatio
 ## Checks and deployment
 
 Run `node --test tests/*.test.mjs` and build/package through the Sites source helper. Preserve `.openai/hosting.json` identity and `DB`. The GitHub `payment-backend` directory is a source snapshot; a frontend push does not deploy this service. Publish the backend through Sites separately. Provider tests currently use deterministic mock responses; actual Paystack end-to-end verification needs owner credentials and approved test/live transactions.
+
+## Account email
+
+Registration requests a verification email through Resend. Configure `RESEND_API_KEY` as a secret and `EMAIL_FROM` as an address on a Resend-verified domain, then redeploy to activate sending. When activated, unverified accounts may browse and manage sign-in but must verify before publishing profiles, arranging work or making online payments. Until configured, the UI clearly reports that email sending is awaiting activation; current-password changes remain available.
+
+Password reset and verification links return to the public LocHire origin, expire after one hour, and are stored as SHA-256 hashes. Link consumption is atomic. Resetting or changing a password revokes all sessions and unused reset links. Resend failure never discards the created account or returns an unmailed token. Recovery answers do not reveal whether an account exists. Verification requests have a one-minute resend interval and account endpoints have server rate limits.
+
+Migration 0010 removes only the owner-authorized test account identified by its original immutable ID, along with its unshared test profile, opening and session data. It cannot remove a new registration using the same email. Other accounts and shared work/payment dependencies are preserved.
