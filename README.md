@@ -55,3 +55,7 @@ node --test payment-backend/tests/*.test.mjs
 The UI integration tests run two separate browser sessions through the actual backend service and SQLite adapter, covering published profiles, openings, invitations, work confirmation, completion and reviews. Service tests cover ownership, privacy, stale edits, concurrent mutations, idempotent payment declarations, administrative access and production banking gates.
 
 A static file server can preview the layout but cannot run accounts. Use the configured gateway and private backend for the full application. See `docs/API.md` for the live routes.
+
+## Appearance and mobile layout
+
+The Android-first interface uses four bottom tabs and a More menu for Payments, Settings and Account. Settings offers Light, Dark and Device appearance; the browser saves the selection and applies it before styles load. Filters, optional profile details, bank setup and payment histories expand on demand. Work agreements remain visible before confirmation. The logo asset is unchanged. Touch controls, safe-area spacing and reduced-motion support are included. No remote fonts or animated decoration are loaded.

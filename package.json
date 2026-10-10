@@ -4,7 +4,7 @@
   "private": true,
   "description": "LocHire live hiring platform with authenticated shared profiles, work agreements, messages, reviews and payment acknowledgements",
   "scripts": {
-    "check": "node --check app.js && node --check live-domain.js && node --check postcode.js && node --check api/gateway.js",
+    "check": "node --check theme.js && node --check app.js && node --check live-domain.js && node --check postcode.js && node --check api/gateway.js",
     "test": "node --test tests/*.test.cjs",
     "build": "npm run check && node scripts/build.cjs"
   },
