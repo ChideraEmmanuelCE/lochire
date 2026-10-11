@@ -1,3 +1,4 @@
+import {billingAction} from './commerce.mjs';
 import { requestAccountEmail } from './account-email.mjs';
 import { PaystackError, paymentReadiness, onlineState, paymentAction, paystackWebhook } from './paystack.mjs';
 import { HiringError, live, emailReady, hiringState, hiringAction, adminRoute, accountRoute } from './hiring.mjs';
@@ -384,9 +385,10 @@ export async function handleRequest(request,env) {
     const user=await session(db,request);
     if(live(env)&&emailReady(env,user.email)&&request.method==='POST'&&(path.startsWith('hiring/')||path.startsWith('payments/'))&&!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at)fail(403,'Verify your email before creating a profile, arranging work or making payments.');
     if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
-    if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path}));
+    if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path,passwordHash}));
     if(['auth/password','auth/verification/request'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
     if(live(env)&&path.startsWith('wema/'))fail(503,'This bank integration has been retired.');
+    if(['payments/topup','payments/credits/verify','payments/premium/checkout','payments/premium/credits','payments/premium/manage'].includes(path)){await limit(db,'payments:'+user.id,20);return send(await billingAction({db,user,env,request,body,path}));}
     if(path.startsWith('payments/')){await limit(db,'payments:'+user.id,20);return send(await paymentAction({db,user,env,request,body,path,passwordHash}));}
     if(path==='postcode/lookup'&&request.method==='POST') {
       if(body.consent!==true)fail(400,'Approve sending this postcode to NIPOST before checking it.');

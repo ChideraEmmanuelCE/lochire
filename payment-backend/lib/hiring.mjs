@@ -2,6 +2,7 @@ import { emailReady, requestAccountEmail } from './account-email.mjs';
 export { emailReady } from './account-email.mjs';
 import { onlineState } from './paystack.mjs';
 import { adminOverview } from './admin-overview.mjs';
+import {billingState,financeAction} from './commerce.mjs';
 // Shared, authenticated hiring. The browser can request an action; only this
 // service decides ownership, participants, publication and transitions.
 export class HiringError extends Error { constructor(status,message){super(message);this.status=status;} }
@@ -67,8 +68,9 @@ export async function hiringState(db,user,env,request){
     if(searchPoint&&p.coordinates&&Date.now()-p.coordinates.at<86400000)safe.distance={metres:Math.round(distance(searchPoint,p.coordinates)/100)*100,accuracy:Math.ceil(p.coordinates.accuracy/100)*100};
     return safe;
   });
-  const openings=(await all(db,"SELECT o.* FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC LIMIT 1000")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>publicOpening({...decoded(r),status:r.status}));
-  if(user){for(const row of await all(db,'SELECT o.* FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE p.user_id=?',user.id)){const o={...decoded(row),status:row.status},i=openings.findIndex(x=>x.id===o.id);if(i>=0)openings[i]=o;else openings.push(o);}}
+  const premiumUsers=new Set((await all(db,'SELECT user_id FROM lh_memberships WHERE mode=? AND expires_at>?',env.PAYSTACK_MODE==='test'?'test':'live',now())).map(m=>m.user_id));
+  const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC LIMIT 1000")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>publicOpening({...decoded(r),status:r.status,premium:premiumUsers.has(r.owner_user)}));
+  if(user){for(const row of await all(db,'SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE p.user_id=?',user.id)){const o={...decoded(row),status:row.status,premium:premiumUsers.has(row.owner_user)},i=openings.findIndex(x=>x.id===o.id);if(i>=0)openings[i]=o;else openings.push(o);}}
   let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
   // Profiles belonging to an active conversation remain visible to its participants.
@@ -77,7 +79,7 @@ export async function hiringState(db,user,env,request){
   const reviews=await all(db,'SELECT id,engagement_id AS engagementId,author,target,rating,text,created_at AS at FROM live_reviews ORDER BY created_at DESC LIMIT 1000');
   const settings=user?await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id):null;
   const payments=user?await all(db,'SELECT p.* FROM live_payments p JOIN live_profiles a ON a.id=p.payer JOIN live_profiles b ON b.id=p.recipient WHERE a.user_id=? OR b.user_id=? ORDER BY created_at DESC LIMIT 250',user.id,user.id):[];
-  return {...await onlineState(db,user,env),version:4,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,emailVerified:!!settings?.email_verified_at}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
+  return {...await onlineState(db,user,env),...await billingState(db,user,env),version:4,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,emailVerified:!!settings?.email_verified_at}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
 }
 async function engagementFor(db,user,gid){const row=await first(db,'SELECT g.* FROM live_engagements g WHERE id=? AND (worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?))',gid,user.id,user.id);if(!row)fail(404,'This engagement is not available to your account.');return row;}
 async function mutate(db,row,g,target,kind,title,extra=[]){
@@ -178,8 +180,9 @@ export async function hiringAction({db,user,env,request,body,path}){
   return hiringState(db,user,env,request);
 }
 
-export async function adminRoute({db,user,env,request,body,path}){
+export async function adminRoute({db,user,env,request,body,path,passwordHash}){
   if(!await admin(db,user,env))fail(403,'Administrator access is required.');
+  if(path.startsWith('admin/finance'))return financeAction({db,user,env,request,body,path,passwordHash});
   if(path==='admin/dashboard'&&request.method==='GET')return adminOverview(db,request);
   if(path!=='admin/reports')fail(404,'Admin route not found.');
   if(request.method==='GET')return {reports:await all(db,'SELECT id,target,kind,reason,details,status,resolution,created_at FROM live_reports ORDER BY created_at DESC LIMIT 250'),counts:{accounts:(await first(db,'SELECT COUNT(*) AS n FROM users')).n,profiles:(await first(db,'SELECT COUNT(*) AS n FROM live_profiles')).n,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n}};
