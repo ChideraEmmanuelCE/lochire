@@ -29,5 +29,6 @@ export async function adminOverview(db,request){
   const pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages);
   const users=await all(db,'SELECT u.id,u.name,u.email,u.role,u.created_at,s.email_verified_at, (SELECT COUNT(*) FROM live_profiles p WHERE p.user_id=u.id) AS profile_count'+join+where+' ORDER BY u.created_at DESC,u.id LIMIT ? OFFSET ?',...values,pageSize,(current-1)*pageSize);
   const byDay=new Map(signups.map(d=>[d.day,d.count]));
-  return {generatedAt,timeZone:'Africa/Lagos',counts:{...counts,unverified:counts.accounts-counts.verified,...profileCounts,...workCounts,pendingReports:reportCounts.pending,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n},signups:Array.from({length:30},(_,i)=>{const day=dayBack(29-i);return {day,count:byDay.get(day)||0};}),users,pagination:{page:current,pageSize,total,pages},filters:{q,verified}};
+  const delivery=(await all(db,'SELECT status,COUNT(*) AS n FROM live_notification_emails GROUP BY status')).reduce((a,r)=>({...a,[r.status]:r.n}),{});
+  return {emailAlerts:delivery,generatedAt,timeZone:'Africa/Lagos',counts:{...counts,unverified:counts.accounts-counts.verified,...profileCounts,...workCounts,pendingReports:reportCounts.pending,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n},signups:Array.from({length:30},(_,i)=>{const day=dayBack(29-i);return {day,count:byDay.get(day)||0};}),users,pagination:{page:current,pageSize,total,pages},filters:{q,verified}};
 }

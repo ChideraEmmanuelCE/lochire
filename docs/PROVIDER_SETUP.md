@@ -1,6 +1,6 @@
 # Paystack activation for LocHire
 
-LocHire uses Paystack hosted checkout and split settlement to each worker's supported Nigerian bank account. A provider-confirmed payment and a bank settlement are separate events. The app does not offer a stored-value wallet, top-ups, manual withdrawals, custody or escrow.
+LocHire uses Paystack hosted checkout and split settlement to each worker's supported Nigerian bank account. A provider-confirmed payment and a bank settlement are separate events. Worker earnings do not use a stored-value wallet or manual withdrawals. Separate hirer premium credits support verified top-ups and premium purchases; they are not a worker-earnings wallet. Confirm that Paystack permits this model before activation.
 
 ## What the owner needs
 
@@ -15,7 +15,7 @@ LocHire uses Paystack hosted checkout and split settlement to each worker's supp
 - Workers choose a supported bank, enter an account number and approve verification. After checking the resolved name, they confirm account ownership/settlement and their LocHire password.
 - The server creates a worker subaccount. The public app never exposes full bank numbers or subaccount codes; only the owner sees the bank, account name and last four digits. Resolved account data has a ten-minute confirmation window and is removed on save; expired tokens are purged on payment requests.
 - A hirer selects a mutually confirmed work agreement, reviews the agreed amount, identifies the period for recurring/hourly/daily work, and approves checkout.
-- The amount, recipient and reference are determined on the server. The platform's share is zero; provider fees are borne by the worker's settlement and are disclosed before checkout.
+- The amount, recipient and reference are determined on the server. The platform share follows the owner’s saved commission setting (default zero). Provider fees and the LocHire fee are disclosed before checkout.
 - Checkout attempts are durable and keyed to work, terms version and period. Repeated or concurrent submissions do not create a second charge. An uncertain initialization stays saved for reconciliation; do not manually repeat it with different work details to bypass that guard.
 - A return URL never proves success. Signed webhook events and participant-triggered status checks verify reference, amount, currency, provider mode and subaccount before showing paid. Duplicate events produce one history record/notification. A reversed payment cannot later be overwritten as successful.
 - Paystack handles settlement on its schedule. LocHire does not label payment success as a completed bank payout.
@@ -34,7 +34,7 @@ Refund initiation and an administrative provider-recovery tool are not implement
 
 ## Other optional providers
 
-Email verification/password recovery: private `RESEND_API_KEY` and `EMAIL_FROM` on a verified sending domain. General hiring-event emails are not implemented.
+Email verification/password recovery: private `RESEND_API_KEY` and `EMAIL_FROM` on a verified sending domain. Work email alerts are implemented with a saved delivery queue, verified recipients, an account preference and bounded retries on later activity. Provider acceptance does not guarantee inbox delivery.
 
 Automated postcode lookup: the assigned NIPOST API key and approved lookup contract. Manual general area entry already works. No additional API is required for profiles, jobs or conversations.
 

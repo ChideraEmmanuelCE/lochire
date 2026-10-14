@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, uniqueIndex, check } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, uniqueIndex, index, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const users = sqliteTable('users', {
@@ -120,7 +120,7 @@ export const livePayments = sqliteTable('live_payments', {
   amount:integer('amount').notNull(),method:text('method').notNull(),note:text('note').notNull(),status:text('status').notNull(),createdAt:text('created_at').notNull(),confirmedAt:text('confirmed_at'),
 },t=>[check('live_payment_positive',sql`${t.amount} >= 100`)]);
 export const liveAccountSettings = sqliteTable('live_account_settings', {
-  userId:text('user_id').primaryKey().references(()=>users.id),emailVerifiedAt:text('email_verified_at'),
+  userId:text('user_id').primaryKey().references(()=>users.id),emailVerifiedAt:text('email_verified_at'),hiringEmailEnabled:integer('hiring_email_enabled').notNull().default(1),
 });
 export const liveEmailTokens = sqliteTable('live_email_tokens', {
   id:text('id').primaryKey(),hash:text('hash').notNull().unique(),userId:text('user_id').notNull().references(()=>users.id),purpose:text('purpose').notNull(),expiresAt:integer('expires_at').notNull(),usedAt:text('used_at'),
@@ -147,3 +147,11 @@ export const payoutBank=sqliteTable('lh_payout_bank',{mode:text('mode').primaryK
 export const withdrawals=sqliteTable('lh_withdrawals',{reference:text('reference').primaryKey(),ownerId:text('owner_id').notNull().references(()=>users.id),mode:text('mode').notNull(),amount:integer('amount').notNull(),reserveFee:integer('reserve_fee').notNull(),recipientCode:text('recipient_code').notNull(),status:text('status').notNull(),transferCode:text('transfer_code'),actualFee:integer('actual_fee'),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull()},t=>[uniqueIndex('lh_one_pending_withdrawal').on(t.mode).where(sql`${t.status} NOT IN ('success','failed','reversed','abandoned','rejected')`),check('lh_positive_withdrawal',sql`${t.amount}>0`)]);
 export const refundAdjustments=sqliteTable('lh_refund_adjustments',{id:text('id').primaryKey(),reference:text('reference').notNull(),mode:text('mode').notNull(),amount:integer('amount').notNull(),applied:integer('applied').notNull().default(0)});
 export const disputeHolds=sqliteTable('lh_dispute_holds',{id:text('id').primaryKey(),reference:text('reference').notNull(),mode:text('mode').notNull(),userId:text('user_id'),amount:integer('amount').notNull(),status:text('status').notNull()});
+
+export const liveNotificationEmails = sqliteTable('live_notification_emails', {
+ notificationId:text('notification_id').primaryKey().references(()=>liveNotifications.id,{onDelete:'cascade'}),
+ status:text('status').notNull().default('pending'),attempts:integer('attempts').notNull().default(0),
+ nextAt:integer('next_at').notNull().default(0),claim:text('claim'),leaseUntil:integer('lease_until').notNull().default(0),
+ firstAttemptAt:integer('first_attempt_at'),sentAt:text('sent_at'),lastError:text('last_error'),
+},t=>[index('live_notification_emails_due').on(t.status,t.nextAt,t.leaseUntil),
+ check('live_notification_emails_status',sql`${t.status} IN ('pending','sending','sent','skipped','failed','review')`)]);

@@ -72,6 +72,7 @@ async function reverseOrder(db,row,status){
 export async function billingAction({db,user,env,request,body,path}){
  if(!paymentReadiness(env).ready)fail(503,'Wallet funding and premium payments are awaiting Paystack activation.');
  if(request.method!=='POST')fail(405,'Method not allowed.');
+ if(['payments/topup','payments/premium/checkout','payments/premium/credits'].includes(path)&&(await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id))?.active_role!=='employer')fail(403,'Switch to Hiring to fund or purchase premium job listings.');
  if(path==='payments/topup')return initialize(db,user,env,body,'topup');
  if(path==='payments/premium/checkout')return initialize(db,user,env,body,body.autoRenew===true?'recurring':'premium');
  if(path==='payments/credits/verify'){

@@ -21,9 +21,9 @@ Workers connect their bank account in Payments. Hirers pay the agreed price usin
 
 Paystack replaces the previous bank-specific integration. Hosted checkout, private bank-account confirmation/subaccounts, durable payment attempts, participant status checks and signed webhooks are implemented. Production money movement remains unavailable until the owner's activated Paystack account and live secret are configured and actual provider tests are completed. See `docs/PROVIDER_SETUP.md` for the exact setup.
 
-The app offers direct bank settlement rather than a stored-value wallet. Platform share is currently zero; processing fees are deducted from the worker's settlement. Paid status confirms the charge, not bank receipt. Refunds and ambiguous provider-request recovery currently use merchant support/dashboard operations.
+Worker earnings use direct bank settlement rather than a stored-value worker wallet. Hirer-only premium credits have a separate balance and funding flow; they cannot pay workers or be withdrawn as work earnings. Platform share is currently zero; processing fees are deducted from the worker's settlement. Paid status confirms the charge, not bank receipt. Refund initiation and ambiguous provider-request recovery currently use merchant support/dashboard operations.
 
-**Email verification and password recovery need `RESEND_API_KEY` and a verified `EMAIL_FROM` in private backend runtime settings.** The app reports missing delivery instead of claiming an email was sent. In-app notifications and authenticated password changes already work. Password changes revoke all sessions. Email notifications for hiring events are not currently sent.
+**Email verification and password recovery need `RESEND_API_KEY` and a verified `EMAIL_FROM` in private backend runtime settings.** The app reports missing delivery instead of claiming an email was sent. In-app notifications and authenticated password changes already work. Password changes revoke all sessions. New hiring and payment notifications queue privacy-preserving work email alerts to verified account emails. Settings controls the work-email preference; account security mail is unaffected. Delivery attempts are saved and retried on later authenticated activity, using provider idempotency keys; historical inbox records are not emailed. The owner dashboard shows provider acceptance, pending deliveries and failures.
 
 **Identity, licence, phone and reference checks are not independently verified.** Profiles are labelled self-reported. Manual postcodes remain unchecked; the NIPOST adapter is retained but no key is configured.
 
@@ -63,3 +63,11 @@ The Android-first interface uses four bottom tabs and a More menu for Payments, 
 ## Passwords and email verification
 
 More → Settings → Password & security offers current-password changes and email recovery. Account shows verification status and resend. With the backend email provider configured, signup requests a verification email and pauses profile creation until verification. Email links return to LocHire with a one-hour, single-use token; verification resumes the next step and password reset returns to sign-in. Configure the backend `RESEND_API_KEY` secret and verified `EMAIL_FROM` sender before testing actual email delivery.
+
+## First-user launch
+
+Worker invitation: https://lochire.ng/#join-worker
+
+Hirer invitation: https://lochire.ng/#join-hirer
+
+Empty listing pages offer share buttons. Follow `docs/LAUNCH_PLAN.md` to recruit 20 genuine published workers and 5 hirers in one area; these are targets, not acquired users. Worker mode hides funding/premium controls, and the backend rejects premium funding or purchases unless the saved role is Hiring. Work earnings continue to settle to the linked bank; no manual worker withdrawal is represented.

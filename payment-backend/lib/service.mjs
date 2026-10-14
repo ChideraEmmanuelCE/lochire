@@ -1,4 +1,5 @@
 import {billingAction} from './commerce.mjs';
+import {deliverWorkEmails} from './work-email.mjs';
 import { requestAccountEmail } from './account-email.mjs';
 import { PaystackError, paymentReadiness, onlineState, paymentAction, paystackWebhook } from './paystack.mjs';
 import { HiringError, live, emailReady, hiringState, hiringAction, adminRoute, accountRoute } from './hiring.mjs';
@@ -326,7 +327,7 @@ async function callback(db,request,body,path,env) {
   // Real bank statements remain separate from the TEST-NGN ledger.
   return {received:true,status:verified.status};
 }
-export async function handleRequest(request,env) {
+async function routeRequest(request,env) {
   let response;
   const send=(data,status=200,headers={})=>Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
   try {
@@ -334,7 +335,7 @@ export async function handleRequest(request,env) {
     const path=new URL(request.url).pathname.replace(/^\/api\//,'').replace(/\/$/,'');
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
     if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:live(env)?paymentReadiness(env).status:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
-    if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env)}});
+    if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
@@ -386,7 +387,7 @@ export async function handleRequest(request,env) {
     if(live(env)&&emailReady(env,user.email)&&request.method==='POST'&&(path.startsWith('hiring/')||path.startsWith('payments/'))&&!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at)fail(403,'Verify your email before creating a profile, arranging work or making payments.');
     if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
     if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path,passwordHash}));
-    if(['auth/password','auth/verification/request'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
+    if(['auth/password','auth/verification/request','auth/email-preferences'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
     if(live(env)&&path.startsWith('wema/'))fail(503,'This bank integration has been retired.');
     if(['payments/topup','payments/credits/verify','payments/premium/checkout','payments/premium/credits','payments/premium/manage'].includes(path)){await limit(db,'payments:'+user.id,20);return send(await billingAction({db,user,env,request,body,path}));}
     if(path.startsWith('payments/')){await limit(db,'payments:'+user.id,20);return send(await paymentAction({db,user,env,request,body,path,passwordHash}));}
@@ -422,6 +423,21 @@ export async function handleRequest(request,env) {
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
     response=send({error:error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
+  }
+  return response;
+}
+
+export async function handleRequest(request,env) {
+  const response=await routeRequest(request,env);
+  const path=new URL(request.url).pathname;
+  if(response.ok&&env.DB&&env.APP_MODE==='production') {
+    let deliver=request.method==='POST'&&(path.startsWith('/api/hiring/')||path==='/api/webhooks/paystack');
+    if(request.method==='GET'&&path==='/api/hiring/state') {
+      try {deliver=!!(await response.clone().json()).user;} catch {}
+    }
+    if(deliver)try {await deliverWorkEmails(env.DB,env);} catch {
+      // A saved work action remains successful if delivery needs retry.
+    }
   }
   return response;
 }

@@ -85,6 +85,13 @@
       "when": 1791693420790,
       "tag": "0011_commerce",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1792000824028,
+      "tag": "0012_work_email_alerts",
+      "breakpoints": true
     }
   ]
 }
