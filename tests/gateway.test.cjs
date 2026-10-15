@@ -102,6 +102,14 @@ test('Paystack webhook forwards the exact raw payload and signature without rese
  const response=await invoke({...req,[Symbol.asyncIterator]:req[Symbol.asyncIterator].bind(req)});assert.equal(response.statusCode,200);assert.equal(forwarded[0].options.body,raw);assert.equal(forwarded[0].options.headers['x-paystack-signature'],'a'.repeat(128));
 });
 
+test('Kora webhook preserves its raw JSON and signature without an Origin or browser session',async()=>{
+ const {Readable}=require('node:stream');const raw='{ "event":"charge.success", "data": { "amount":1000, "reference":"KPY-fixture" } }';
+ const req=Readable.from([Buffer.from(raw)]);Object.assign(req,{method:'POST',url:'/api/webhooks/korapay',headers:{'x-korapay-signature':'b'.repeat(64)},body:{event:'do-not-read-parsed-body'}});
+ const response=await invoke({...req,[Symbol.asyncIterator]:req[Symbol.asyncIterator].bind(req)});
+ assert.equal(response.statusCode,200);assert.equal(forwarded[0].url,'https://private-service.example.test/api/webhooks/korapay');assert.equal(forwarded[0].options.body,raw);assert.equal(forwarded[0].options.headers['x-korapay-signature'],'b'.repeat(64));
+ const denied=await invoke({method:'POST',query:{path:'webhooks/korapay/other'},body:{}});assert.equal(denied.statusCode,403);
+});
+
 test('custom domain mutations require an exact configured origin and preserve it for the backend',async()=>{
  process.env.ALLOWED_APP_ORIGINS='https://lochire.ng';
  const accepted=await invoke({method:'POST',query:{path:'auth/forgot'},headers:{origin:'https://lochire.ng'},body:{email:'owner@example.test'}});

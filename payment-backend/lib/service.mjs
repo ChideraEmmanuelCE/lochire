@@ -1,4 +1,5 @@
 import {billingAction} from './commerce.mjs';
+import {KoraError,koraWebhook,koraWebhookStatus} from './korapay.mjs';
 import {syncWorkerMatches} from './worker-radar.mjs';
 import {deliverWorkEmails} from './work-email.mjs';
 import { requestAccountEmail } from './account-email.mjs';
@@ -339,11 +340,13 @@ async function routeRequest(request,env) {
     if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
+    if(request.method==='GET'&&path==='webhooks/korapay')return send(koraWebhookStatus(env));
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
     const origin=request.headers.get('origin'),allowedOrigins=new Set([env.APP_ORIGIN,...String(env.ALLOWED_APP_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean)]);
     if(request.method==='POST'&&!path.startsWith('webhooks/')&&!allowedOrigins.has(origin))fail(403,'This request must come from LocHire.');
     if(Number(request.headers.get('content-length')||0)>16000)fail(413,'Request is too large.');
     if(path==='webhooks/paystack'&&request.method==='POST'){const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');return send(await paystackWebhook(db,request,raw,env));}
+    if(path==='webhooks/korapay'&&request.method==='POST'){const raw=await request.text();return send(await koraWebhook(db,request,raw,env));}
     if(live(env)&&path.startsWith('webhooks/wema/'))fail(503,'This bank integration has been retired.');
     let body={};
     if(request.method==='POST') {const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');try{body=JSON.parse(raw||'{}');}catch{fail(400,'Invalid JSON request.');}if(!body||Array.isArray(body)||typeof body!=='object')fail(400,'Invalid request body.');}
@@ -423,7 +426,7 @@ async function routeRequest(request,env) {
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
+    response=send({error:error instanceof KoraError||error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof KoraError||error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
   }
   return response;
 }
