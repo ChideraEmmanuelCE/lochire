@@ -7,6 +7,10 @@ import {deliverWorkEmails} from '../lib/work-email.mjs';
 
 async function fixture(){
  const h=harness(),people=await h.setup();
+ // This suite isolates ordinary work mail; radar emails have their own suite.
+ await h.db.prepare("DELETE FROM live_notifications WHERE kind='worker_match'").bind().run();
+ const profile=await h.db.prepare("SELECT data FROM live_profiles WHERE id=?").bind(people.e.profile).first();
+ await h.db.prepare('UPDATE live_profiles SET data=? WHERE id=?').bind(JSON.stringify({...JSON.parse(profile.data),candidateAlerts:false}),people.e.profile).run();
  for(const u of [people.e,people.w])await h.db.prepare('INSERT INTO live_account_settings(user_id,email_verified_at) VALUES(?,?)').bind(u.id,new Date().toISOString()).run();
  Object.assign(h.env,{RESEND_API_KEY:'re_fixture',EMAIL_FROM:'LocHire <accounts@verified.example>',EMAIL_MODE:'production'});
  return {...h,...people};
@@ -78,10 +82,11 @@ test('worker mode cannot start a premium top-up or purchase even when payments a
 
 test('the additive email migration preserves existing invitations without emailing history',()=>{
  const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
- for(const file of readdirSync(new URL('../drizzle/',import.meta.url)).filter(f=>f.endsWith('.sql')&&!f.startsWith('0012_')).sort())sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+ for(const file of readdirSync(new URL('../drizzle/',import.meta.url)).filter(f=>f.endsWith('.sql')&&f<'0012_').sort())sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
  sqlite.prepare('INSERT INTO users(id,email,name,phone,role,password_hash,password_salt,created_at) VALUES(?,?,?,?,?,?,?,?)').run('historical','history@example.test','Historical worker','08012345678','worker','fixture','fixture',new Date().toISOString());
  sqlite.prepare('INSERT INTO live_notifications(id,user_id,kind,title,created_at) VALUES(?,?,?,?,?)').run('NOT-old-history','historical','invitation','An existing invitation',new Date().toISOString());
  sqlite.exec(readFileSync(new URL('../drizzle/0012_work_email_alerts.sql',import.meta.url),'utf8'));
+ sqlite.exec(readFileSync(new URL('../drizzle/0013_worker_radar.sql',import.meta.url),'utf8'));
  assert.equal(sqlite.prepare('SELECT title FROM live_notifications WHERE id=?').get('NOT-old-history').title,'An existing invitation');
  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM live_notification_emails').get().n,0);sqlite.close();
 });

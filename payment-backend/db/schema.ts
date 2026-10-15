@@ -152,6 +152,15 @@ export const liveNotificationEmails = sqliteTable('live_notification_emails', {
  notificationId:text('notification_id').primaryKey().references(()=>liveNotifications.id,{onDelete:'cascade'}),
  status:text('status').notNull().default('pending'),attempts:integer('attempts').notNull().default(0),
  nextAt:integer('next_at').notNull().default(0),claim:text('claim'),leaseUntil:integer('lease_until').notNull().default(0),
- firstAttemptAt:integer('first_attempt_at'),sentAt:text('sent_at'),lastError:text('last_error'),
+ firstAttemptAt:integer('first_attempt_at'),sentAt:text('sent_at'),lastError:text('last_error'),payload:text('payload'),
 },t=>[index('live_notification_emails_due').on(t.status,t.nextAt,t.leaseUntil),
  check('live_notification_emails_status',sql`${t.status} IN ('pending','sending','sent','skipped','failed','review')`)]);
+
+export const livePresence=sqliteTable('live_presence',{
+ userId:text('user_id').primaryKey().references(()=>users.id),lastSeenAt:integer('last_seen_at').notNull(),
+});
+export const liveWorkerMatches=sqliteTable('live_worker_matches',{
+ id:text('id').primaryKey(),openingId:text('opening_id').notNull().references(()=>liveOpenings.id),
+ workerId:text('worker_id').notNull().references(()=>liveProfiles.id),employerId:text('employer_id').notNull().references(()=>liveProfiles.id),
+ status:text('status').notNull().default('pending'),data:text('data').notNull(),createdAt:text('created_at').notNull(),decidedAt:text('decided_at'),engagementId:text('engagement_id'),
+},t=>[uniqueIndex('live_match_opening_worker').on(t.openingId,t.workerId),index('live_match_employer_status').on(t.employerId,t.status),check('live_match_status',sql`${t.status} IN ('pending','invited','declined')`)]);

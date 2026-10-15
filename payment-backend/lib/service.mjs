@@ -1,4 +1,5 @@
 import {billingAction} from './commerce.mjs';
+import {syncWorkerMatches} from './worker-radar.mjs';
 import {deliverWorkEmails} from './work-email.mjs';
 import { requestAccountEmail } from './account-email.mjs';
 import { PaystackError, paymentReadiness, onlineState, paymentAction, paystackWebhook } from './paystack.mjs';
@@ -347,7 +348,7 @@ async function routeRequest(request,env) {
     let body={};
     if(request.method==='POST') {const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');try{body=JSON.parse(raw||'{}');}catch{fail(400,'Invalid JSON request.');}if(!body||Array.isArray(body)||typeof body!=='object')fail(400,'Invalid request body.');}
     await limit(db,request.headers.get('x-lochire-client-ip')||'unknown',120);
-    if(path==='hiring/state'&&request.method==='GET'){let viewer=null;try{viewer=await session(db,request);}catch(error){if(error.status!==401)throw error;}return send(await hiringState(db,viewer,env,request));}
+    if(path==='hiring/state'&&request.method==='GET'){let viewer=null;try{viewer=await session(db,request);}catch(error){if(error.status!==401)throw error;}if(viewer){const hirer=await first(db,"SELECT id FROM live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0",viewer.id);if(hirer)await syncWorkerMatches(db,{employerId:hirer.id});}return send(await hiringState(db,viewer,env,request));}
     if(['auth/forgot','auth/reset','auth/verify'].includes(path)&&request.method==='POST'){await limit(db,'account:'+ (request.headers.get('x-lochire-client-ip')||'unknown'),10);return send(await accountRoute({db,user:null,env,request,body,path,passwordHash}));}
     if(path.startsWith('webhooks/')&&request.method==='POST')return send(await callback(db,request,body,path,env));
     if(['auth/register','auth/login'].includes(path)&&request.method==='POST') {

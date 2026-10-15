@@ -123,3 +123,29 @@ test('worker and hirer invitation links lead to truthful onboarding and preserve
 test('work email preference is saved across page reloads without disabling account security mail',async()=>{
  const f=await fixture(),b=f.browser();try{await tick();await register(b,'emailprefs');await click(b,'#account-button');await click(b,'[data-page="settings"]');fill(b,{enabled:false});await submit(b,'email-preferences-form');assert.equal(b.w.document.querySelector('#email-preferences-form [name="enabled"]').checked,false);assert.match(b.w.document.querySelector('main').textContent,/Security and password-reset emails stay enabled/);await click(b,'[data-page="profile"]');await click(b,'[data-page="settings"]');assert.equal(b.w.document.querySelector('#email-preferences-form [name="enabled"]').checked,false);assert.equal(f.errors.length,0);}finally{b.close();}
 });
+
+test('hirer-only live matches accept a worker for interview, save details across sessions, and respect dark mode',async()=>{
+ const f=await fixture(),w=f.browser({theme:'dark'}),e=f.browser({theme:'dark'});
+ try{
+  await tick();await register(w,'radarworker');await createProfile(w,true);await register(e,'radarhirer');await switchRole(e,'employer');await createProfile(e,false);
+  await click(e,'[data-page="openings"]');await click(e,'[data-action="post"]');const future=new Date(Date.now()+2*86400000).toISOString().slice(0,10);
+  fill(e,{type:'One-off task',category:'Plumbing',title:'Local pipe repair interview',description:'Inspect and repair the leak.',min:'15000',max:'25000',basis:'Per task',skills:'Pipe fitting',date:future,duration:'Two hours',accommodation:'Not applicable'});await submit(e,'opening-form');
+  await click(e,'#account-button');await click(e,'[data-page="available"]');assert.equal(e.w.document.querySelectorAll('.match-card').length,1);assert.match(e.w.document.querySelector('main').textContent,/radarworker/);assert.match(e.w.document.querySelector('main').textContent,/Active now/);assert.match(e.w.document.querySelector('main').textContent,/matching skill/);assert.equal(e.w.document.documentElement.dataset.theme,'dark');
+  await click(e,'[data-action="match-accept"]');fill(e,{date:future,time:'10:00',location:'12 Interview Street, Jericho, Ibadan',contactName:'Local hiring manager',phone:'08012345678',contactEmail:'radarhirer@example.test',notes:'Bring examples of your repairs.',shareDetails:false});await submit(e,'interview-form');assert.match(e.w.document.querySelector('#form-error').textContent,/Approve sharing/);
+  fill(e,{shareDetails:true});await submit(e,'interview-form');assert.match(e.w.document.querySelector('main').textContent,/12 Interview Street/);assert.ok(e.w.document.querySelector('[data-action="save-interview"]'));
+  w.w.dispatchEvent(new w.w.Event('focus'));await tick();await click(w,'[data-page="notifications"]');assert.match(w.w.document.querySelector('main').textContent,/Accepted for an interview/);await click(w,'[data-action="record"]');assert.match(w.w.document.querySelector('.interview-panel').textContent,/Local hiring manager/);assert.match(w.w.document.querySelector('.interview-panel').textContent,/12 Interview Street/);await click(w,'[data-op="accept"]');assert.match(w.w.document.querySelector('.interview-panel').textContent,/confirmed/);
+  await click(w,'#account-button');await click(w,'[data-page="settings"]');await click(w,'[data-action="theme-light"]');assert.equal(w.w.document.documentElement.dataset.theme,'light');await click(w,'[data-page="engagements"]');await click(w,'[data-action="record"]');assert.match(w.w.document.querySelector('.interview-panel').textContent,/12 Interview Street/);
+  w.w.location.hash='#available';await tick();assert.equal(w.w.document.querySelector('.match-card'),null);assert.match(w.w.document.querySelector('main').textContent,/Switch to Hiring/);
+  assert.equal(f.errors.length,0);
+ }finally{w.close();e.close();}
+});
+
+test('declined matches stay hidden and workers can pause local promotion without changing the theme',async()=>{
+ const f=await fixture(),w=f.browser(),e=f.browser();try{
+  await tick();await register(w,'declineworker');await createProfile(w,true);await register(e,'declinehirer');await switchRole(e,'employer');await createProfile(e,false);
+  await click(e,'[data-page="openings"]');await click(e,'[data-action="post"]');const future=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  fill(e,{type:'One-off task',category:'Plumbing',title:'Repair visit',description:'Repair the leak.',min:'15000',max:'25000',basis:'Per task',skills:'Pipe fitting',date:future,duration:'Two hours',accommodation:'Not applicable'});await submit(e,'opening-form');
+  await click(e,'#account-button');await click(e,'[data-page="available"]');await click(e,'[data-action="match-decline"]');await submit(e,'match-decline-form');assert.equal(e.w.document.querySelector('.match-card'),null);await click(e,'[data-action="refresh"]');assert.equal(e.w.document.querySelector('.match-card'),null);
+  await click(w,'[data-page="profile"]');await click(w,'[data-action="availability-toggle"]');assert.match(w.w.document.querySelector('.availability-panel').textContent,/paused/);await click(w,'[data-action="availability-toggle"]');assert.match(w.w.document.querySelector('.availability-panel').textContent,/Ready for your next opportunity/);assert.equal(f.errors.length,0);
+ }finally{w.close();e.close();}
+});

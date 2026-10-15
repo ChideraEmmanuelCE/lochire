@@ -38,3 +38,14 @@ Direct-payment records have `reported`, `acknowledged` or `disputed` status. Onl
 Public discovery removes phone, email, exact coordinates and postcodes. Optional transient `lat` and `lon` query parameters return coarse worker distances; they are not saved as the visitor's location. Exact worker snapshots expire for discovery after 24 hours.
 
 Production rejects test-money funding and retired bank routes. `hiring/state` also returns `provider`, owner-only masked `bank` and participant-only `onlinePayments`; anonymous responses contain no bank or payment details. Online charge success and participant-acknowledged direct payments remain separate. No stored-value wallet is created. See `PROVIDER_SETUP.md` for activation and settlement/fee details.
+
+
+## Local matches and interview invitations
+
+- `GET /api/hiring/state`: `workerMatches` is limited to the signed-in hirer's own published employer profile. Worker cards include short-lived `activity` only for accounts with a published hirer profile. `Active now` is derived from a heartbeat within 90 seconds, never from profile publication.
+- `POST /api/hiring/presence`: authenticated, visible worker client heartbeat; no client-supplied activity timestamp is accepted.
+- `POST /api/hiring/profiles/worker`: adds `promoteProfile` (default true) alongside `published` and `acceptingBookings`. Matching excludes profiles that opt out, pause, hide, become suspended or block the hirer.
+- `POST /api/hiring/profiles/employer`: `candidateAlerts` (default true) controls local match notifications independently of general work-email preferences.
+- `POST /api/hiring/matches/:id/decline`: saves the hirer's decision for that opening.
+- `POST /api/hiring/matches/:id/accept`: body `{shareDetails:true, interview:{date,time,location,contactName,phone,contactEmail,notes}}`. Date/time must be in the future in WAT. Only the owning hirer can decide a match; availability and blocks are rechecked. An idempotent interview invitation and worker notification are created together. Replays do not send a second invitation.
+- The existing engagement accept/decline actions confirm/decline an interview. Work terms and payment confirmation stay separate. Exact interview details are available only to the two participants and in the worker's requested notification email.

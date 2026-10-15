@@ -71,3 +71,13 @@ Worker invitation: https://lochire.ng/#join-worker
 Hirer invitation: https://lochire.ng/#join-hirer
 
 Empty listing pages offer share buttons. Follow `docs/LAUNCH_PLAN.md` to recruit 20 genuine published workers and 5 hirers in one area; these are targets, not acquired users. Worker mode hides funding/premium controls, and the backend rejects premium funding or purchases unless the saved role is Hiring. Work earnings continue to settle to the linked bank; no manual worker withdrawal is represented.
+
+## Live local worker matches and interviews
+
+In Hiring mode, open More → Live worker matches (or the live panel on Workers). New published profiles are matched to a hirer's open jobs by occupation, work type, required skills, experience, start date, city and general service area. The feed explains each match. The worker's “Send my published profile” and “Ready to receive work enquiries” choices control inclusion. Private account contacts, precise location and licence information are excluded from suggestion emails. Hirers can disable candidate alerts in their profile or disable all work mail in Settings.
+
+Candidate summaries go to verified registered hirers with matching openings, with one email notification per hirer per Lagos calendar day. The feed continues updating as more profiles arrive. Activity uses authenticated heartbeats while the worker is viewing LocHire; “Active now” expires after 90 seconds. Upcoming availability is labelled by date. Activity is shown to hirer accounts, and the interface checks for updates every 30 seconds.
+
+“Accept for interview” asks for a future WAT date/time, interview address or meeting link, contact person and phone. The hirer explicitly approves sharing those details. An invitation and inbox notification are saved, with an email queued to the worker's verified account. The worker can confirm attendance or decline; accepting an interview does not confirm employment or agreed pay. Both participants can revisit the interview in My work, and download a calendar event. Declining a matched profile hides that suggestion for the opening and preserves the decision. Duplicate or competing requests cannot create duplicate invitations.
+
+Migration 0013 adds local match decisions, expiring activity timestamps and frozen email retry payloads without changing historical records. Email uses the existing delivery queue and Resend configuration, with retries during authenticated activity. There is no cold email outreach to companies outside LocHire. Automated UI tests cover both roles, light/dark appearance and saved interview details; service tests cover match ownership, opt-outs, stale activity, competing decisions and email idempotency.
