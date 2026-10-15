@@ -27,6 +27,10 @@ module.exports = async function handler(req,res) {
     if(req.method==='POST'&&!webhook&&!allowedOrigins.has(req.headers.origin))return res.status(403).json({error:'This request must come from LocHire.'});
     const headers={'Accept':'application/json','Content-Type':'application/json','x-lochire-service-key':service,'OAI-Sites-Authorization':'Bearer '+bypass};
     for(const name of ['idempotency-key','x-wema-callback-token','x-paystack-signature','x-korapay-signature','origin'])if(typeof req.headers[name]==='string')headers[name]=req.headers[name];
+    // Server-only test-key relay to the authenticated private service. Never
+    // copy an incoming client key or send it to any other API route.
+    const koraTestKey=process.env.KORAPAY_TEST_SECRET_KEY;
+    if(koraWebhook&&typeof koraTestKey==='string'&&koraTestKey.startsWith('sk_test_'))headers['x-lochire-kora-test-key']=koraTestKey;
     const sessionCookie=req.headers.cookie?.match(/(?:^|;\s*)(lh_session=[^;]+)/)?.[1];
     if(sessionCookie)headers.cookie=sessionCookie;
     // Vercel sets the forwarded address. Do not trust an arbitrary browser ID.

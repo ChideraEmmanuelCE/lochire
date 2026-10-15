@@ -26,8 +26,24 @@ funding as available or ask users to transfer money yet.
 5. GET the notification URL to confirm `webhookReady=true`. Until configured,
    POST responds 503 so Kora can retry instead of silently losing notifications.
 
-There is currently no separate credential-entry form in LocHire. Secret setup
-must use the supported private hosting configuration; screenshots are not keys.
+### Enter the test key directly in Vercel
+
+The owner can instead save `KORAPAY_TEST_SECRET_KEY` as a **Secret** scoped to
+Production in the LocHire Vercel project's environment settings. Here Production
+means the hosted gateway environment; the Kora key must still start `sk_test_`.
+Redeploy Vercel after saving it. Never post the key in chat or source code.
+
+For this path, set the private Sites runtime config to `KORAPAY_MODE=test`,
+`KORAPAY_WEBHOOKS_ENABLED=true`, `KORAPAY_ALLOW_TEST_KEY_RELAY=true`, and
+`KORAPAY_BUSINESS_APPROVED=false`, then deploy the saved Site version.
+The gateway sends only its own saved test key over HTTPS, only on the exact Kora
+webhook route, after stripping client-supplied copies. The backend requires its
+existing private service credential before reading this header. It does not
+persist or return the relayed key, accepts no live key via this path, and gives
+a directly configured Sites key precedence. Missing keys still return 503.
+
+There is no separate credential-entry form inside LocHire. Screenshots are not
+keys. This config enables only the notification inbox, never balance funding.
 
 ## Before real deposits
 

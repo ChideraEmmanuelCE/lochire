@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {harness} from './paystack-fixture.mjs';
+import {koraRequestEnvironment} from '../lib/korapay.mjs';
+
+test('test-key relay is opt-in, requires private service authentication, and cannot supply live credentials',async()=>{
+ const h=harness(),headers={'x-lochire-kora-test-key':'sk_test_private_relay'};
+ h.env.KORAPAY_WEBHOOKS_ENABLED='true';h.env.KORAPAY_MODE='test';
+ assert.equal((await h.call('webhooks/korapay',undefined,null,headers)).data.webhookReady,false);
+ h.env.KORAPAY_ALLOW_TEST_KEY_RELAY='true';
+ assert.equal((await h.call('webhooks/korapay',undefined,null,headers)).data.webhookReady,true);
+ assert.equal((await h.call('webhooks/korapay',undefined,null,{...headers,'x-lochire-service-key':'wrong'})).status,403);
+ assert.equal((await h.call('webhooks/korapay',undefined,null,{'x-lochire-kora-test-key':'sk_live_bad'})).data.webhookReady,false);
+ const req=new Request('https://private.test',{headers});
+ const native={...h.env,KORAPAY_SECRET_KEY:'sk_test_native'};assert.equal(koraRequestEnvironment(native,req),native);
+ h.env.KORAPAY_MODE='live';assert.equal((await h.call('webhooks/korapay',undefined,null,headers)).data.webhookReady,false);
+});
 
 function fixture(){
  const h=harness();

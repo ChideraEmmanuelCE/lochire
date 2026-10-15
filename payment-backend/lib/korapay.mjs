@@ -10,6 +10,15 @@ const hex=bytes=>Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'
 const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;let difference=0;for(let i=0;i<a.length;i++)difference|=a.charCodeAt(i)^b.charCodeAt(i);return difference===0;};
 const digest=async value=>hex(await crypto.subtle.digest('SHA-256',encoder.encode(value)));
 
+// Called only after service.mjs authenticates x-lochire-service-key. The
+// Vercel gateway supplies its own saved test secret; client headers are dropped.
+// Live credentials are never accepted through this testing-only relay.
+export function koraRequestEnvironment(env,request){
+  if(env.KORAPAY_SECRET_KEY||env.KORAPAY_MODE==='live'||env.KORAPAY_ALLOW_TEST_KEY_RELAY!=='true')return env;
+  const testKey=request.headers.get('x-lochire-kora-test-key');
+  return typeof testKey==='string'&&testKey.startsWith('sk_test_')?{...env,KORAPAY_MODE:'test',KORAPAY_SECRET_KEY:testKey}:env;
+}
+
 export function koraWebhookStatus(env){
   const mode=env.KORAPAY_MODE==='live'?'live':'test';
   const keyMatches=String(env.KORAPAY_SECRET_KEY||'').startsWith(mode==='live'?'sk_live_':'sk_test_');

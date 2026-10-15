@@ -110,6 +110,15 @@ test('Kora webhook preserves its raw JSON and signature without an Origin or bro
  const denied=await invoke({method:'POST',query:{path:'webhooks/korapay/other'},body:{}});assert.equal(denied.statusCode,403);
 });
 
+test('Kora test keys come only from server settings and never go to unrelated routes or response bodies',async()=>{
+ process.env.KORAPAY_TEST_SECRET_KEY='sk_test_private_gateway_fixture';
+ const response=await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});
+ assert.equal(forwarded[0].options.headers['x-lochire-kora-test-key'],'sk_test_private_gateway_fixture');assert.doesNotMatch(response.body,/sk_test_/);
+ await invoke({query:{path:'hiring/state'},headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[1].options.headers['x-lochire-kora-test-key'],undefined);
+ process.env.KORAPAY_TEST_SECRET_KEY='sk_live_not_allowed';await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[2].options.headers['x-lochire-kora-test-key'],undefined);
+ delete process.env.KORAPAY_TEST_SECRET_KEY;await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[3].options.headers['x-lochire-kora-test-key'],undefined);
+});
+
 test('custom domain mutations require an exact configured origin and preserve it for the backend',async()=>{
  process.env.ALLOWED_APP_ORIGINS='https://lochire.ng';
  const accepted=await invoke({method:'POST',query:{path:'auth/forgot'},headers:{origin:'https://lochire.ng'},body:{email:'owner@example.test'}});
