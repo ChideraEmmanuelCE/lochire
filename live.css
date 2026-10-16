@@ -27,3 +27,6 @@ body{font-size:17px;line-height:1.65}.header-inner{max-width:1160px}.brand-logo{
 .menu-trigger{display:flex;align-items:center;justify-content:center;gap:5px;width:auto;min-width:66px;border-radius:24px;padding:8px 10px}.menu-trigger .icon{width:18px;height:18px}.menu-word{font-size:12px;font-weight:700}.profile-nudge .nudge-icon{flex:none}
 
 @media(min-width:360px){.bottom-nav button{font-size:13px}}
+
+/* The same hamburger button is used on every route, including admin. */
+.menu-trigger{display:inline-flex;flex-direction:row;align-items:center;justify-content:center;flex-wrap:nowrap;gap:6px;width:auto;min-width:76px;height:46px;min-height:46px;padding:10px 12px;white-space:nowrap}.menu-trigger .icon{display:block;width:22px;height:22px;stroke-width:2;flex:none}.menu-word{display:block;font-size:12px;font-weight:700;line-height:1}
