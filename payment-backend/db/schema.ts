@@ -204,3 +204,8 @@ export const jobAlerts=sqliteTable('lh_job_alerts',{
 export const jobAlertOutbox=sqliteTable('lh_job_alert_outbox',{
  openingId:text('opening_id').primaryKey().references(()=>liveOpenings.id,{onDelete:'cascade'}),processedAt:text('processed_at'),
 });
+
+// Store the age declaration outcome, not a person's full date of birth.
+export const accountAgeChecks=sqliteTable('account_age_checks',{
+ userId:text('user_id').primaryKey().references(()=>users.id),confirmedAt:text('confirmed_at').notNull(),minimumAge:integer('minimum_age').notNull().default(18),method:text('method').notNull(),
+});

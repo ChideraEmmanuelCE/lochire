@@ -52,7 +52,7 @@ function harness() {
     const response=await handleRequest(request,env);return {status:response.status,data:await response.json(),cookie:response.headers.get('set-cookie')?.split(';')[0]};
   }
   async function register(label,role='both') {
-    const result=await call('auth/register',{name:label,email:label+'@example.test',phone:'08012345678',role,password:'ExampleTestPassword123!',demoConsent:true});
+    const result=await call('auth/register',{name:label,email:label+'@example.test',phone:'08012345678',role,password:'ExampleTestPassword123!',demoConsent:true,dateOfBirth:'1995-01-01',adultConsent:true});
     assert.equal(result.status,201,JSON.stringify(result.data));assert.match(result.cookie,/^lh_session=/);return {cookie:result.cookie,id:result.data.user.id};
   }
   async function createJob(employer,worker,value=2000000) {

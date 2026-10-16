@@ -1,3 +1,4 @@
+import {adultRegistrationError} from './eligibility.mjs';
 import {premiumAction,premiumWebhook,premiumState,premiumReadiness,drainJobAlertOutbox} from './premium.mjs';
 import {billingAction} from './commerce.mjs';
 import {KoraError,koraWebhook,koraWebhookStatus,koraRequestEnvironment} from './korapay.mjs';
@@ -366,6 +367,7 @@ async function routeRequest(request,env) {
       await limit(db,`auth:${email}`,10);
       let user;
       if(path==='auth/register') {
+        const ageError=adultRegistrationError(body.dateOfBirth,body.adultConsent);if(ageError)fail(400,ageError);
         const name=clean(body.name,'name',70),phone=clean(body.phone,'phone number',20);
         if(!/^(\+234|0)\d{10}$/.test(phone))fail(400,'Use a Nigerian number, starting with 0 or +234.');
         if(!['worker','employer','both'].includes(body.role))fail(400,'Choose worker, employer or both.');
@@ -375,6 +377,7 @@ async function routeRequest(request,env) {
         await db.batch([
           db.prepare('INSERT INTO users (id,email,name,phone,role,password_hash,password_salt,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(id,email,name,phone,body.role,hash,salt,at),
           db.prepare("INSERT INTO wallets (user_id,available,held,bank_status,active_role) VALUES (?,0,0,'not_connected',?)").bind(id,['worker','employer'].includes(body.activeRole)?body.activeRole:body.role==='worker'?'worker':'employer'),
+          db.prepare('INSERT INTO account_age_checks(user_id,confirmed_at,minimum_age,method) VALUES(?,?,18,?)').bind(id,at,'declared_date_of_birth'),
         ]);
         user=await first(db,'SELECT * FROM users WHERE id=?',id);
       } else {

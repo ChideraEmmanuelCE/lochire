@@ -127,6 +127,13 @@
       "when": 1792160327647,
       "tag": "0017_remove_confirmed_demo_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792160843471,
+      "tag": "0018_adult_account_checks",
+      "breakpoints": true
     }
   ]
 }

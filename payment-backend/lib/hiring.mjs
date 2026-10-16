@@ -1,3 +1,4 @@
+import {calendarDate,reviewEligibility} from './eligibility.mjs';
 import {premiumState,premiumAccess,premiumFinance} from './premium.mjs';
 import {koraSandboxAvailable} from './kora-wallet.mjs';
 import { emailReady, requestAccountEmail } from './account-email.mjs';
@@ -20,7 +21,7 @@ const optional=(v,label,max=1500)=>v==null||v===''?'':text(v,label,max);
 const number=(v,label,max=100000000)=>{const n=Number(v);if(!Number.isFinite(n)||n<0||n>max)fail(400,'Enter a valid '+label+'.');return n;};
 const choose=(v,options,label)=>{if(!options.includes(v))fail(400,'Choose a valid '+label+'.');return v;};
 const array=(v,label,max=25)=>{if(!Array.isArray(v)||v.length>max)fail(400,'Enter a valid '+label+'.');return [...new Set(v.map(x=>text(x,label,100)))];};
-const date=(v,label)=>{v=text(v,label,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(v)||!Number.isFinite(Date.parse(v+'T12:00:00Z')))fail(400,'Enter a valid '+label+'.');return v;};
+const date=(v,label)=>{v=text(v,label,10);if(!calendarDate(v))fail(400,'Enter a valid '+label+'.');return v;};
 const time=v=>{if(typeof v!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(v))fail(400,'Enter valid working hours.');return v;};
 const today=()=>new Date(Date.now()+3600000).toISOString().slice(0,10);
 const categories=['Domestic help','Cooking','Driving','Cleaning','Plumbing','Electrical work','Painting','Carpentry','Appliance repairs','Gate attendant','Shop assistant'];
@@ -83,6 +84,7 @@ export async function hiringState(db,user,env,request){
   });
   let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
+  engagements=engagements.map(g=>({...g,reviewEligibility:reviewEligibility(g)}));
   // Profiles belonging to an active conversation remain visible to its participants.
   const participantIds=[...new Set(engagements.flatMap(g=>[g.workerId,g.employerId]))];
   for(const pid of participantIds)if(!published.some(p=>p.id===pid)){const r=await first(db,'SELECT * FROM live_profiles WHERE id=?',pid);if(r)published.push(publicProfile(decoded(r)));}
@@ -155,14 +157,14 @@ export async function hiringAction({db,user,env,request,body,path}){
     else if(action==='terms'){
       if(!['Accepted','Confirmed'].includes(g.status))fail(409,'Accept the invitation before agreeing work.');
       const t=body.terms;if(!t||typeof t!=='object')fail(400,'Add work details.');
-      g.terms={scope:text(t.scope,'scope'),pay:number(t.pay,'pay'),basis:choose(t.basis,bases,'payment basis'),schedule:text(t.schedule,'schedule',300),start:date(t.start,'start date'),city:text(t.city,'city',70),area:text(t.area,'area',90),completionDate:t.completionDate?date(t.completionDate,'completion date'):'',materials:optional(t.materials,'materials',300),accommodation:optional(t.accommodation,'accommodation',100),paymentMethod:choose(t.paymentMethod||'bank_transfer',['cash','bank_transfer'],'payment method')};
+      g.terms={scope:text(t.scope,'scope'),pay:number(t.pay,'pay'),basis:choose(t.basis,bases,'payment basis'),schedule:text(t.schedule,'schedule',300),start:date(t.start,'start date'),city:text(t.city,'city',70),area:text(t.area,'area',90),completionDate:date(t.completionDate,'job end date'),materials:optional(t.materials,'materials',300),accommodation:optional(t.accommodation,'accommodation',100),paymentMethod:choose(t.paymentMethod||'bank_transfer',['cash','bank_transfer'],'payment method')};
       if(g.terms.pay<=0||g.terms.pay*100!==Math.round(g.terms.pay*100)||g.terms.completionDate&&g.terms.completionDate<g.terms.start)fail(400,'Enter valid pay and dates.');
       g.version++;g.confirmations={};g.completion={};g.status='Accepted';title='Work details proposed: '+g.title;
     }else if(action==='confirm'){if(g.status!=='Accepted'||!g.terms||body.version!==g.version)fail(409,'Review the current work details before confirming.');g.confirmations[actor]=g.version;if(g.confirmations[g.workerId]===g.version&&g.confirmations[g.employerId]===g.version)g.status='Confirmed';title='Work details confirmed: '+g.title;}
     else if(action==='complete'){if(g.status!=='Confirmed')fail(409,'Both participants must confirm the work details first.');g.completion[actor]=true;if(g.completion[g.workerId]&&g.completion[g.employerId])g.status='Completed';title=(g.status==='Completed'?'Work completed: ':'Completion requested: ')+g.title;}
     else if(action==='cancel'){if(['Completed','Declined','Cancelled'].includes(g.status))fail(409,'This conversation is closed.');g.status='Cancelled';title='Engagement cancelled: '+g.title;}
     else if(action==='review'){
-      if(g.status!=='Completed')fail(409,'Reviews require completed work.');const rating=Number(body.rating);if(!Number.isInteger(rating)||rating<1||rating>5)fail(400,'Choose 1 to 5 stars.');
+      const eligibility=reviewEligibility(g);if(!eligibility.allowed)fail(409,eligibility.reason+(eligibility.endDate?' Job end date: '+eligibility.endDate+'.':''));const rating=Number(body.rating);if(!Number.isInteger(rating)||rating<1||rating>5)fail(400,'Choose 1 to 5 stars.');
       if(await first(db,'SELECT id FROM live_reviews WHERE engagement_id=? AND author=?',g.id,actor))fail(409,'You have already reviewed this work.');
       await run(db,'INSERT INTO live_reviews (id,engagement_id,author,target,rating,text,created_at) VALUES (?,?,?,?,?,?,?)',id('REV'),g.id,actor,target,rating,text(body.text,'review',1000),at);await notify(db,target,'review','New review: '+g.title,g.id);
       return hiringState(db,user,env,request);
