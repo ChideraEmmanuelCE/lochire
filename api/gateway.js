@@ -20,8 +20,36 @@ module.exports = async function handler(req,res) {
     }
     url.searchParams.delete('path');
     if(!url.pathname.startsWith('/api/')||url.pathname.includes('..'))return res.status(400).json({error:'Invalid API route.'});
+    // Backend-only test transport. The saved secret is sent only to Kora.
+    // Browsers cannot choose an API URL, override a key, or call this operation.
+    if(url.pathname==='/api/internal/kora'){
+      const {timingSafeEqual}=require('node:crypto'),supplied=req.headers['x-lochire-provider-key'];
+      if(req.method!=='POST'||typeof supplied!=='string'||Buffer.byteLength(supplied)!==Buffer.byteLength(service)||!timingSafeEqual(Buffer.from(supplied),Buffer.from(service)))return res.status(403).json({error:'Private service access required.'});
+      const key=process.env.KORAPAY_TEST_SECRET_KEY;
+      if(typeof key!=='string'||!key.startsWith('sk_test_'))return res.status(503).json({error:'Kora test credentials are not configured.'});
+      let raw=req.body;
+      if(raw===undefined){const chunks=[];let size=0;for await(const chunk of req){size+=Buffer.byteLength(chunk);if(size>16000)return res.status(413).json({error:'Request too large.'});chunks.push(Buffer.from(chunk));}raw=Buffer.concat(chunks).toString('utf8');}
+      let input;try{input=typeof raw==='string'?JSON.parse(raw):raw;}catch{return res.status(400).json({error:'Invalid request.'});}
+      if(!input||Buffer.byteLength(JSON.stringify(input))>16000)return res.status(400).json({error:'Invalid request.'});
+      let path,body;
+      if(input.operation==='connection')path='/misc/banks?countryCode=NG';
+      else if(input.operation==='verify'&&/^LHPR-[a-f0-9]{32}$/.test(input.reference||''))path='/charges/'+input.reference;
+      else if(input.operation==='refund'&&/^[-A-Za-z0-9_]{1,50}$/.test(input.reference||''))path='/refunds/'+input.reference;
+      else if(input.operation==='initialize'){
+        const p=input.payload;
+        if(!p||!/^LHPR-[a-f0-9]{32}$/.test(p.reference||'')||![900,1200].includes(p.amount)||p.currency!=='NGN'||p.merchant_bears_cost!==true||!p.customer?.email)return res.status(400).json({error:'Invalid premium purchase.'});
+        const appOrigin=process.env.APP_ORIGIN||'https://lochire.ng';
+        if(p.notification_url!==new URL('/api/webhooks/korapay',appOrigin).href||p.redirect_url!==new URL('/?premium_reference='+p.reference+'#premium',appOrigin).href)return res.status(400).json({error:'Invalid callback destination.'});
+        path='/charges/initialize';body=JSON.stringify(p);
+      }else return res.status(400).json({error:'Unsupported premium operation.'});
+      const result=await fetch('https://api.korapay.com/merchant/api/v1'+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+key,Accept:'application/json','Content-Type':'application/json'},body,redirect:'error',signal:AbortSignal.timeout(15000)});
+      const data=await result.json().catch(()=>null);
+      if(!result.ok||data?.status!==true)return res.status([401,403,404,422,429].includes(result.status)?result.status:503).json({status:false,error:'Kora could not confirm this operation.'});
+      return res.status(200).json(data);
+    }
     const origin=process.env.APP_ORIGIN||'https://lochire.vercel.app',allowedOrigins=new Set([origin,...String(process.env.ALLOWED_APP_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean)]);
-    const paystackWebhook=url.pathname==='/api/webhooks/paystack';
+    if(url.pathname==='/api/webhooks/paystack'||url.pathname.startsWith('/api/webhooks/wema/'))return res.status(410).json({error:'This payment integration has been retired.'});
+    const paystackWebhook=false;
     const koraWebhook=url.pathname==='/api/webhooks/korapay';
     const webhook=paystackWebhook||koraWebhook||url.pathname.startsWith('/api/webhooks/wema/');
     if(req.method==='POST'&&!webhook&&!allowedOrigins.has(req.headers.origin))return res.status(403).json({error:'This request must come from LocHire.'});
@@ -30,7 +58,7 @@ module.exports = async function handler(req,res) {
     // Server-only test-key relay to the authenticated private service. Never
     // copy an incoming client key or send it to any other API route.
     const koraTestKey=process.env.KORAPAY_TEST_SECRET_KEY;
-    if((koraWebhook||url.pathname.startsWith('/api/payments/kora/'))&&typeof koraTestKey==='string'&&koraTestKey.startsWith('sk_test_'))headers['x-lochire-kora-test-key']=koraTestKey;
+    if((koraWebhook||url.pathname.startsWith('/api/payments/premium/')||url.pathname==='/api/hiring/state'||url.pathname==='/api/config')&&typeof koraTestKey==='string'&&koraTestKey.startsWith('sk_test_'))headers['x-lochire-kora-test-key']=koraTestKey;
     const sessionCookie=req.headers.cookie?.match(/(?:^|;\s*)(lh_session=[^;]+)/)?.[1];
     if(sessionCookie)headers.cookie=sessionCookie;
     // Vercel sets the forwarded address. Do not trust an arbitrary browser ID.

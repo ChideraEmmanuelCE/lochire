@@ -25,10 +25,27 @@ export function koraWebhookStatus(env){
   return {provider:'Kora',mode,webhookReady:ready,status:ready?'notification_inbox_ready':'awaiting_configuration',automaticCredits:false,virtualAccounts:false,workerPayouts:false};
 }
 
+// Optional test-only transport through the existing private Vercel gateway.
+// Live traffic always calls Kora directly with its separately configured key.
+export async function koraProviderFetch(env,path,options={}){
+  if(env.KORAPAY_MODE!=='live'&&env.KORAPAY_TEST_API_PROXY_URL){
+    const proxy=new URL(env.KORAPAY_TEST_API_PROXY_URL),origin=new URL(env.APP_ORIGIN);
+    if(proxy.origin!==origin.origin||proxy.pathname!=='/api/internal/kora'||proxy.search||proxy.protocol!=='https:')throw Error('Invalid private test transport');
+    let payload;
+    if(path==='/misc/banks?countryCode=NG')payload={operation:'connection'};
+    else if(path==='/charges/initialize')payload={operation:'initialize',payload:JSON.parse(options.body)};
+    else if(/^\/charges\/LHPR-[a-f0-9]{32}$/.test(path))payload={operation:'verify',reference:path.split('/').at(-1)};
+    else if(/^\/refunds\/[-A-Za-z0-9_]{1,50}$/.test(path))payload={operation:'refund',reference:path.split('/').at(-1)};
+    else throw Error('Unsupported private test transport');
+    return fetch(proxy.href,{method:'POST',headers:{'Content-Type':'application/json','x-lochire-provider-key':env.SERVICE_SECRET},body:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(20000)});
+  }
+  return fetch('https://api.korapay.com/merchant/api/v1'+path,options);
+}
+
 export async function koraApi(env,path,body){
   if(!koraWebhookStatus(env).webhookReady||env.KORAPAY_MODE==='live'||!String(env.KORAPAY_SECRET_KEY||'').startsWith('sk_test_'))fail(503,'The Kora sandbox requires a test key. Live wallet payments are disabled.');
   let response;
-  try {response=await fetch('https://api.korapay.com/merchant/api/v1'+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+env.KORAPAY_SECRET_KEY,Accept:'application/json','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(15000)});}
+  try {response=await koraProviderFetch(env,path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+env.KORAPAY_SECRET_KEY,Accept:'application/json','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(15000)});}
   catch{fail(503,'Kora could not be reached. Check the saved operation before retrying.','provider_unreachable');}
   const result=await response.json().catch(()=>null);
   if(!response.ok||result?.status!==true){const code=response.status===401?'credentials_rejected':response.status===403?'provider_access_denied':response.status>=500?'provider_unavailable':'provider_request_rejected';fail(503,response.status===401?'Kora rejected the saved test key. Check the private server configuration.':response.status===403?'Kora denied sandbox access. Check API access and IP restrictions in your Kora account.':'Kora could not confirm this sandbox request. Check its saved status.',code);}
@@ -38,7 +55,7 @@ export async function koraApi(env,path,body){
 export async function queryCharge(env,reference){
   let response;
   try {
-    response=await fetch('https://api.korapay.com/merchant/api/v1/charges/'+encodeURIComponent(reference),{
+    response=await koraProviderFetch(env,'/charges/'+encodeURIComponent(reference),{
       headers:{Authorization:'Bearer '+env.KORAPAY_SECRET_KEY,Accept:'application/json'},
       redirect:'error',signal:AbortSignal.timeout(15000)
     });
@@ -70,6 +87,7 @@ export async function koraWebhook(db,request,raw,env,handlers={}){
   const key=await crypto.subtle.importKey('raw',encoder.encode(env.KORAPAY_SECRET_KEY),{name:'HMAC',hash:'SHA-256'},false,['sign']);
   const expected=hex(await crypto.subtle.sign('HMAC',key,encoder.encode(JSON.stringify(event.data))));
   if(!equal(expected,signature.toLowerCase()))fail(401,'Invalid Kora notification signature.');
+  if(handlers.onEvent)return handlers.onEvent(event);
   // Payout/refund events need their own future reconciliation handlers.
   if(event.event.startsWith('transfer.')&&handlers.onPayout){await handlers.onPayout(event.data);return {received:true,handled:true};}
   if(event.event!=='charge.success')return {received:true,handled:false};

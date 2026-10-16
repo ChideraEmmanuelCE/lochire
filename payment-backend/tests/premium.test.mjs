@@ -1,0 +1,116 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHmac} from 'node:crypto';
+import {harness} from './paystack-fixture.mjs';
+import {premiumAccess,queueNearbyJobAlerts} from '../lib/premium.mjs';
+import {deliverWorkEmails} from '../lib/work-email.mjs';
+
+async function fixture(){
+ const h=harness();delete h.env.PAYMENTS_PRODUCT;
+ const people=await h.setup();
+ Object.assign(h.env,{KORAPAY_MODE:'test',KORAPAY_WEBHOOKS_ENABLED:'true',KORAPAY_PREMIUM_ENABLED:'true',KORAPAY_SECRET_KEY:'sk_test_premium_fixture',KORAPAY_PREMIUM_TEST_USERS:people.w.id});
+ return {...h,...people};
+}
+async function checkout(h,tier='access',user=h.w,requestId=crypto.randomUUID()){
+ return h.call('payments/premium/checkout',{tier,amount:tier==='access'?90000:120000,consent:true,alertsConsent:tier==='alerts',requestId},user);
+}
+function provider(h,{status='success',patch={},failInit=false}={}){
+ const calls=[],charges=new Map(),original=global.fetch;
+ global.fetch=async(url,opts)=>{
+  calls.push({url,opts});
+  if(url.endsWith('/charges/initialize')){if(failInit)throw Error('private network detail');const b=JSON.parse(opts.body);charges.set(b.reference,{reference:b.reference,currency:'NGN',amount:b.amount,amount_paid:b.amount,status,customer:b.customer,...patch});return Response.json({status:true,data:{reference:b.reference,checkout_url:'https://checkout.korapay.com/'+b.reference+'/pay'}});}
+  const reference=url.split('/').at(-1);return Response.json({status:true,data:charges.get(reference)});
+ };
+ return {calls,charges,restore(){global.fetch=original;}};
+}
+
+test('the default product exposes locked previews without private job fields and lists workers for free',async()=>{
+ const h=await fixture();
+ for(const user of [null,h.w,h.outsider]){const r=await h.call('hiring/state',undefined,user);assert.equal(r.status,200);const o=r.data.openings.find(o=>o.id===h.oid);assert.equal(o.locked,true);for(const k of ['description','employerId','postcode','skills','duration'])assert.equal(k in o,false);assert.equal(r.data.workers.length,1);assert.equal(r.data.workers[0].id,h.w.profile);}
+ const own=await h.call('hiring/state',undefined,h.e);assert.equal(own.data.openings[0].locked,false);assert.match(own.data.openings[0].description,/leaking/);
+ const denied=await h.call('hiring/engagements',{role:'worker',openingId:h.oid,message:'Please consider me.'},h.w);assert.equal(denied.status,403);
+ const gid=await h.invite(h.e,h.w,h.oid);assert.equal((await h.action(h.w,gid,'accept')).status,200);assert.equal((await h.call('hiring/state',undefined,h.w)).data.openings[0].locked,false);
+});
+
+test('salary, balance, payout and old provider routes are retired on the default product',async()=>{
+ const h=await fixture();for(const path of ['payments/topup','payments/checkout','payments/banks','payments/bank/save','payments/kora/account','payments/kora/withdraw','payments/premium/credits'])assert.equal((await h.call(path,{},h.w)).status,410,path);
+ assert.equal((await h.call('webhooks/paystack',{})).status,410);assert.equal((await h.call('webhooks/wema/transactions',{})).status,410);
+ const c=(await h.call('config')).data;assert.equal(c.features.salaryPayments,false);assert.equal(c.features.walletFunding,false);assert.equal(c.payments.name,'Kora');assert.equal(c.payments.ready,false);
+});
+
+test('checkout takes server prices and signed-in identity, charges naira, and rejects hidden edits',async()=>{
+ const h=await fixture(),p=provider(h);try{
+  const id=crypto.randomUUID(),r=await checkout(h,'access',h.w,id);assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.order.amount,90000);
+  const b=JSON.parse(p.calls[0].opts.body);assert.equal(b.amount,900);assert.equal(b.customer.email,'artisan@example.test');assert.equal(b.metadata['lochire-user'],h.w.id);assert.equal(b.merchant_bears_cost,true);assert.match(b.redirect_url,/premium_reference=LHPR-/);
+  assert.equal((await checkout(h,'access',h.w,id)).data.checkoutUrl,r.data.checkoutUrl);assert.equal(p.calls.length,1);
+  for(const patch of [{amount:1},{tier:'fake'},{consent:false}])assert.ok((await h.call('payments/premium/checkout',{tier:'access',amount:90000,consent:true,requestId:crypto.randomUUID(),...patch},h.w)).status>=400);
+  assert.equal((await checkout(h,'access',h.outsider)).status,503);
+ }finally{p.restore();}
+});
+
+test('verification unlocks exactly the order owner once and persists through logout and fresh sign-in',async()=>{
+ const h=await fixture(),p=provider(h);try{
+  const r=await checkout(h),reference=r.data.order.reference;
+  assert.equal((await h.call('payments/premium/verify',{reference},h.outsider)).status,503);
+  const verify=()=>h.call('payments/premium/verify',{reference},h.w);
+  const results=await Promise.all([verify(),verify(),verify()]);for(const r of results){assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.premium.active,true);assert.equal(r.data.premium.alerts,false);}
+  assert.equal((await h.db.prepare('SELECT COUNT(*) AS n FROM lh_premium_grants').bind().first()).n,1);
+  assert.equal((await h.call('hiring/state',undefined,h.w)).data.openings[0].locked,false);
+  assert.equal((await h.call('hiring/state',undefined,h.outsider)).data.openings[0].locked,true);
+  await h.call('auth/logout',{},h.w);const signed=await h.call('auth/login',{email:'artisan@example.test',password:'SecureFixturePassword123!'});assert.equal(signed.data.premium.active,true);assert.equal(signed.data.worker.id,h.w.profile);assert.equal(signed.data.premiumOrders.length,1);
+ }finally{p.restore();}
+});
+
+test('forged callbacks, wrong amounts, incomplete payments and wrong emails never grant access',async()=>{
+ for(const patch of [{currency:'USD'},{reference:'LHPR-'+ 'a'.repeat(32)},{amount:899},{amount_paid:899},{customer:{email:'outsider@example.test'}},{transaction_status:'underpaid'}]){
+  const h=await fixture(),p=provider(h,{patch});try{const r=await checkout(h),reference=r.data.order.reference;assert.equal((await h.call('payments/premium/verify',{reference},h.w)).status,409,JSON.stringify(patch));assert.equal((await premiumAccess(h.db,h.w,h.env)).active,false);}finally{p.restore();}
+ }
+ const h=await fixture(),p=provider(h,{status:'processing'});try{const r=await checkout(h),reference=r.data.order.reference;const r2=await h.call('payments/premium/verify',{reference},h.w);assert.equal(r2.status,200);assert.equal(r2.data.premium.active,false);const event={event:'charge.success',data:{reference,currency:'NGN',amount:900,status:'success'}};assert.equal((await h.call('webhooks/korapay',event,null,{'x-korapay-signature':'a'.repeat(64)})).status,401);}finally{p.restore();}
+});
+
+test('a signed checkout webhook works without virtual bank account fields and cannot duplicate a pass',async()=>{
+ const h=await fixture(),p=provider(h);try{const r=await checkout(h,'alerts'),reference=r.data.order.reference,event={event:'charge.success',data:{reference,amount:1200,currency:'NGN',status:'success'}};
+ const signature=createHmac('sha256',h.env.KORAPAY_SECRET_KEY).update(JSON.stringify(event.data)).digest('hex');
+ for(let i=0;i<3;i++){const r=await h.call('webhooks/korapay',event,null,{'x-korapay-signature':signature});assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.unlocked,true);}
+ const a=await premiumAccess(h.db,h.w,h.env);assert.equal(a.alerts,true);assert.equal((await h.db.prepare('SELECT COUNT(*) AS n FROM lh_premium_grants').bind().first()).n,1);
+ }finally{p.restore();}
+});
+
+test('pending initialization is saved on timeouts; duplicate requests never create another charge',async()=>{
+ const h=await fixture(),p=provider(h,{failInit:true}),id=crypto.randomUUID();try{
+ const r=await checkout(h,'access',h.w,id);assert.equal(r.status,503);assert.doesNotMatch(JSON.stringify(r.data),/private network detail|sk_test/);
+ const r2=await checkout(h,'access',h.w,id);assert.equal(r2.status,200);assert.equal(r2.data.order.status,'initializing');assert.equal(r2.data.checkoutUrl,null);assert.equal(p.calls.length,1);
+ }finally{p.restore();}
+});
+
+test('test passes never grant live access, live checkout needs approval, and expiry locks new jobs',async()=>{
+ const h=await fixture(),p=provider(h);try{const r=await checkout(h);await h.call('payments/premium/verify',{reference:r.data.order.reference},h.w);assert.equal((await premiumAccess(h.db,h.w,h.env)).active,true);assert.equal((await premiumAccess(h.db,h.w,{KORAPAY_MODE:'live'})).active,false);
+ h.env.KORAPAY_MODE='live';h.env.KORAPAY_SECRET_KEY='sk_live_fixture';assert.equal((await checkout(h)).status,503);h.env.KORAPAY_MODE='test';h.env.KORAPAY_SECRET_KEY='sk_test_premium_fixture';await h.db.prepare("UPDATE lh_premium_grants SET expires_at='2020-01-01T00:00:00.000Z'").bind().run();assert.equal((await h.call('hiring/state',undefined,h.w)).data.openings[0].locked,true);
+ }finally{p.restore();}
+});
+
+async function grant(h,user,tier,mode='live'){
+ const ref='LHPR-'+crypto.randomUUID().replaceAll('-',''),stamp=new Date(Date.now()-60000).toISOString();
+ await h.db.prepare("INSERT INTO lh_kora_premium_orders(reference,user_id,mode,tier,amount,status,claim,created_at,applied) VALUES(?,?,?,?,?,'success',?,?,1)").bind(ref,user.id,mode,tier,tier==='alerts'?120000:90000,crypto.randomUUID(),stamp).run();
+ await h.db.prepare('INSERT INTO lh_premium_grants(reference,user_id,mode,tier,starts_at,expires_at) VALUES(?,?,?,?,?,?)').bind(ref,user.id,mode,tier,stamp,new Date(Date.now()+30*86400000).toISOString()).run();
+ return ref;
+}
+test('only verified Plus members receive matching new-job email, with duplicate and preference protection',async()=>{
+ const h=await fixture(),mails=[],old=global.fetch;
+ await grant(h,h.w,'alerts');await h.db.prepare('INSERT INTO live_account_settings(user_id,email_verified_at,hiring_email_enabled) VALUES(?,?,1)').bind(h.w.id,new Date().toISOString()).run();
+ await h.db.prepare('INSERT INTO lh_job_alert_preferences(user_id,enabled,city,area,category) VALUES(?,1,?,?,?)').bind(h.w.id,'Ibadan','Jericho','Plumbing').run();
+ await h.db.prepare('INSERT INTO live_account_settings(user_id,email_verified_at) VALUES(?,?)').bind(h.e.id,new Date().toISOString()).run();
+ Object.assign(h.env,{RESEND_API_KEY:'re_fixture',EMAIL_FROM:'LocHire <alerts@example.test>'});
+ global.fetch=async(url,opts)=>{assert.equal(url,'https://api.resend.com/emails');const mail=JSON.parse(opts.body);if(mail.subject.startsWith('New nearby job:'))mails.push(mail);return Response.json({id:'email-fixture'});};
+ try{
+  await queueNearbyJobAlerts(h.db,h.oid);await queueNearbyJobAlerts(h.db,h.oid);await deliverWorkEmails(h.db,h.env);assert.equal(mails.length,1);assert.deepEqual(mails[0].to,['artisan@example.test']);assert.match(mails[0].text,/Repair kitchen pipe/);assert.match(mails[0].text,/#opening\/OPN-/);assert.doesNotMatch(mails[0].text,/OY-PRIVATE/);
+  await queueNearbyJobAlerts(h.db,h.oid);await deliverWorkEmails(h.db,h.env);assert.equal(mails.length,1);
+  const r=await h.call('hiring/openings',{...h.opening,requestId:crypto.randomUUID(),city:'Lagos'},h.e);assert.equal(r.status,200);assert.equal(mails.length,1);
+  await h.db.prepare('UPDATE lh_job_alert_preferences SET enabled=0 WHERE user_id=?').bind(h.w.id).run();
+  assert.equal((await h.call('hiring/openings',{...h.opening,requestId:crypto.randomUUID()},h.e)).status,200);assert.equal(mails.length,1);
+ }finally{global.fetch=old;}
+});
+
+test('the 900 pass and sandbox Plus passes do not send new-job alerts; expiry suppresses queued content',async()=>{
+ for(const [tier,mode]of [['access','live'],['alerts','test']]){const h=await fixture();await grant(h,h.w,tier,mode);await h.db.prepare('INSERT INTO live_account_settings(user_id,email_verified_at) VALUES(?,?)').bind(h.w.id,new Date().toISOString()).run();await h.db.prepare("INSERT INTO lh_job_alert_preferences(user_id,enabled,city,area,category) VALUES(?,1,'Ibadan','Jericho','Plumbing')").bind(h.w.id).run();await queueNearbyJobAlerts(h.db,h.oid);assert.equal((await h.db.prepare('SELECT COUNT(*) AS n FROM lh_job_alerts').bind().first()).n,0);}
+});

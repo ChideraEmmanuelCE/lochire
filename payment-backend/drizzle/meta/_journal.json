@@ -106,6 +106,20 @@
       "when": 1792078089636,
       "tag": "0014_kora_sandbox_wallet",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1792139691902,
+      "tag": "0015_odd_jetstream",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1792140427291,
+      "tag": "0016_zippy_onslaught",
+      "breakpoints": true
     }
   ]
 }

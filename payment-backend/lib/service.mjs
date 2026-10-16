@@ -1,3 +1,4 @@
+import {premiumAction,premiumWebhook,premiumState,premiumReadiness,drainJobAlertOutbox} from './premium.mjs';
 import {billingAction} from './commerce.mjs';
 import {KoraError,koraWebhook,koraWebhookStatus,koraRequestEnvironment} from './korapay.mjs';
 import {koraWalletAction,applySandboxDeposit,reconcileSandboxPayout,checkKoraTestConnection} from './kora-wallet.mjs';
@@ -57,6 +58,7 @@ async function trust(db,userId) {
   return { completedJobs: jobs.completed||0, cancelledJobs:jobs.cancelled||0, reviews:review.count||0, rating:review.average?Math.round(review.average*10)/10:null,positiveReviews:review.positive||0,positivePercent:review.count?Math.round((review.positive||0)/review.count*100):null, basis:'Completed payment agreements and participant reviews, including test activity. These records are not a reliability guarantee.' };
 }
 async function summary(db,user,env={}) {
+  if(live(env)&&env.PAYMENTS_PRODUCT!=='legacy'){const w=await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id);return {user:publicUser(user),wallet:{activeRole:w?.active_role},...await premiumState(db,user,env),transactions:[],jobs:[],message:'Work payments are arranged directly between hirers and workers. Kora checkout covers LocHire premium access only.'};}
   if(live(env)) {
     const w=await first(db,'SELECT * FROM wallets WHERE user_id=?',user.id);
     return {user:publicUser(user),wallet:{id:user.id,currency:'NGN',activeRole:w.active_role,available:null,held:null,bankStatus:'direct_settlement',accountNumber:null,accountName:null},transactions:[],jobs:[],reviews:[],bankPayments:[],...await onlineState(db,user,env),message:'Paystack settles online payments to the worker’s connected bank account.'};
@@ -338,6 +340,8 @@ async function routeRequest(request,env) {
     const path=new URL(request.url).pathname.replace(/^\/api\//,'').replace(/\/$/,'');
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
     if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:live(env)?paymentReadiness(env).status:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
+    if(live(env)&&env.PAYMENTS_PRODUCT!=='legacy'&&(path==='webhooks/paystack'||path.startsWith('webhooks/wema/')))fail(410,'This payment integration has been retired.');
+    if(request.method==='GET'&&path==='config'&&live(env)&&env.PAYMENTS_PRODUCT!=='legacy')return send({mode:'live',currency:'NGN',storage:'persistent',payments:premiumReadiness(koraRequestEnvironment(env,request),null),features:{accounts:true,realHiring:true,bankDeposits:false,salaryPayments:false,walletFunding:false,premiumAccess:true,nearbyJobAlerts:true,emailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
@@ -347,12 +351,12 @@ async function routeRequest(request,env) {
     if(request.method==='POST'&&!path.startsWith('webhooks/')&&!allowedOrigins.has(origin))fail(403,'This request must come from LocHire.');
     if(Number(request.headers.get('content-length')||0)>16000)fail(413,'Request is too large.');
     if(path==='webhooks/paystack'&&request.method==='POST'){const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');return send(await paystackWebhook(db,request,raw,env));}
-    if(path==='webhooks/korapay'&&request.method==='POST'){const raw=await request.text(),koraEnv=koraRequestEnvironment(env,request);return send(await koraWebhook(db,request,raw,koraEnv,koraEnv.KORAPAY_SANDBOX_WALLET_ENABLED==='true'&&koraEnv.KORAPAY_MODE==='test'?{onCharge:d=>applySandboxDeposit(db,koraEnv,d),onPayout:d=>reconcileSandboxPayout(db,koraEnv,d.reference)}:{}));}
+    if(path==='webhooks/korapay'&&request.method==='POST'){const raw=await request.text(),koraEnv=koraRequestEnvironment(env,request);return send(await koraWebhook(db,request,raw,koraEnv,koraEnv.PAYMENTS_PRODUCT!=='legacy'?{onEvent:event=>premiumWebhook(db,koraEnv,event)}:koraEnv.KORAPAY_SANDBOX_WALLET_ENABLED==='true'&&koraEnv.KORAPAY_MODE==='test'?{onCharge:d=>applySandboxDeposit(db,koraEnv,d),onPayout:d=>reconcileSandboxPayout(db,koraEnv,d.reference)}:{}));}
     if(live(env)&&path.startsWith('webhooks/wema/'))fail(503,'This bank integration has been retired.');
     let body={};
     if(request.method==='POST') {const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');try{body=JSON.parse(raw||'{}');}catch{fail(400,'Invalid JSON request.');}if(!body||Array.isArray(body)||typeof body!=='object')fail(400,'Invalid request body.');}
     await limit(db,request.headers.get('x-lochire-client-ip')||'unknown',120);
-    if(path==='hiring/state'&&request.method==='GET'){let viewer=null;try{viewer=await session(db,request);}catch(error){if(error.status!==401)throw error;}if(viewer){const hirer=await first(db,"SELECT id FROM live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0",viewer.id);if(hirer)await syncWorkerMatches(db,{employerId:hirer.id});}return send(await hiringState(db,viewer,env,request));}
+    if(path==='hiring/state'&&request.method==='GET'){let viewer=null;try{viewer=await session(db,request);}catch(error){if(error.status!==401)throw error;}if(viewer){const hirer=await first(db,"SELECT id FROM live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0",viewer.id);if(hirer)await syncWorkerMatches(db,{employerId:hirer.id});}return send(await hiringState(db,viewer,koraRequestEnvironment(env,request),request));}
     if(['auth/forgot','auth/reset','auth/verify'].includes(path)&&request.method==='POST'){await limit(db,'account:'+ (request.headers.get('x-lochire-client-ip')||'unknown'),10);return send(await accountRoute({db,user:null,env,request,body,path,passwordHash}));}
     if(path.startsWith('webhooks/')&&request.method==='POST')return send(await callback(db,request,body,path,env));
     if(['auth/register','auth/login'].includes(path)&&request.method==='POST') {
@@ -394,6 +398,7 @@ async function routeRequest(request,env) {
     if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path,passwordHash}));
     if(['auth/password','auth/verification/request','auth/email-preferences'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
     if(live(env)&&path.startsWith('wema/'))fail(503,'This bank integration has been retired.');
+    if(live(env)&&env.PAYMENTS_PRODUCT!=='legacy'&&path.startsWith('payments/')){if(!['payments/premium/state','payments/premium/checkout','payments/premium/verify','payments/premium/alerts'].includes(path))fail(410,'LocHire no longer processes salaries, wallet deposits or worker withdrawals. Arrange work payments directly with the hirer.');await limit(db,'premium:'+user.id,20);return send(await premiumAction({db,user,env:koraRequestEnvironment(env,request),request,body,path}));}
     if(['payments/topup','payments/credits/verify','payments/premium/checkout','payments/premium/credits','payments/premium/manage'].includes(path)){await limit(db,'payments:'+user.id,20);return send(await billingAction({db,user,env,request,body,path}));}
     if(path.startsWith('payments/kora/')){await limit(db,'kora:'+user.id,30);return send(await koraWalletAction({db,user,env:koraRequestEnvironment(env,request),request,body,path,passwordHash}));}
     if(path.startsWith('payments/')){await limit(db,'payments:'+user.id,20);return send(await paymentAction({db,user,env,request,body,path,passwordHash}));}
@@ -441,7 +446,7 @@ export async function handleRequest(request,env) {
     if(request.method==='GET'&&path==='/api/hiring/state') {
       try {deliver=!!(await response.clone().json()).user;} catch {}
     }
-    if(deliver)try {await deliverWorkEmails(env.DB,env);} catch {
+    if(deliver)try {if(env.PAYMENTS_PRODUCT!=='legacy')await drainJobAlertOutbox(env.DB);await deliverWorkEmails(env.DB,env);} catch {
       // A saved work action remains successful if delivery needs retry.
     }
   }

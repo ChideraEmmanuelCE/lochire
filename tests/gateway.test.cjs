@@ -79,14 +79,8 @@ test('host-only cookies cannot replace an app session or pass browser cookies to
   assert.equal(forwarded[0].options.headers.cookie, 'lh_session=opaque');
 });
 
-test('bank callbacks retain bank authentication through the nested rewrite', async () => {
-  const response = await invoke({ method: 'POST', query: { path: 'webhooks/wema/transactions' }, headers: { 'x-wema-callback-token': 'test-bank-callback' }, body: { transactionReference: 'LH-bank-test' } });
-  assert.equal(response.statusCode, 200);
-  assert.equal(forwarded[0].url, 'https://private-service.example.test/api/webhooks/wema/transactions');
-  assert.equal(forwarded[0].options.headers['x-wema-callback-token'], 'test-bank-callback');
-  assert.deepEqual(JSON.parse(forwarded[0].options.body), { transactionReference: 'LH-bank-test' });
+test('retired bank callbacks are rejected without forwarding',async()=>{const r=await invoke({method:'POST',query:{path:'webhooks/wema/transactions'},body:{}});assert.equal(r.statusCode,410);assert.equal(forwarded.length,0);
 });
-
 test('malformed rewrites cannot select another origin or traverse backend routes', async () => {
   for (const path of ['../admin', 'https://other.example.test', '/auth/login', 'auth//login', 'auth/login?skip=true', '']) {
     const response = await invoke({ query: { path } });
@@ -96,12 +90,8 @@ test('malformed rewrites cannot select another origin or traverse backend routes
 });
 
 
-test('Paystack webhook forwards the exact raw payload and signature without reserializing it',async()=>{
- const {Readable}=require('node:stream');const raw='{ "event": "charge.success", "data": {"reference":"fixture"} }';
- const req=Readable.from([Buffer.from(raw)]);Object.assign(req,{method:'POST',url:'/api/webhooks/paystack',headers:{'x-paystack-signature':'a'.repeat(128)},body:{event:'do-not-read-parsed-body'}});
- const response=await invoke({...req,[Symbol.asyncIterator]:req[Symbol.asyncIterator].bind(req)});assert.equal(response.statusCode,200);assert.equal(forwarded[0].options.body,raw);assert.equal(forwarded[0].options.headers['x-paystack-signature'],'a'.repeat(128));
+test('retired Paystack callbacks are rejected without forwarding',async()=>{const r=await invoke({method:'POST',url:'/api/webhooks/paystack',body:{}});assert.equal(r.statusCode,410);assert.equal(forwarded.length,0);
 });
-
 test('Kora webhook preserves its raw JSON and signature without an Origin or browser session',async()=>{
  const {Readable}=require('node:stream');const raw='{ "event":"charge.success", "data": { "amount":1000, "reference":"KPY-fixture" } }';
  const req=Readable.from([Buffer.from(raw)]);Object.assign(req,{method:'POST',url:'/api/webhooks/korapay',headers:{'x-korapay-signature':'b'.repeat(64)},body:{event:'do-not-read-parsed-body'}});
@@ -114,10 +104,10 @@ test('Kora test keys come only from server settings and never go to unrelated ro
  process.env.KORAPAY_TEST_SECRET_KEY='sk_test_private_gateway_fixture';
  const response=await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});
  assert.equal(forwarded[0].options.headers['x-lochire-kora-test-key'],'sk_test_private_gateway_fixture');assert.doesNotMatch(response.body,/sk_test_/);
- await invoke({query:{path:'hiring/state'},headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[1].options.headers['x-lochire-kora-test-key'],undefined);
+ await invoke({query:{path:'hiring/state'},headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[1].options.headers['x-lochire-kora-test-key'],'sk_test_private_gateway_fixture');
  process.env.KORAPAY_TEST_SECRET_KEY='sk_live_not_allowed';await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[2].options.headers['x-lochire-kora-test-key'],undefined);
  delete process.env.KORAPAY_TEST_SECRET_KEY;await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[3].options.headers['x-lochire-kora-test-key'],undefined);
- process.env.KORAPAY_TEST_SECRET_KEY='sk_test_private_gateway_fixture';await invoke({query:{path:'payments/kora/state'}});assert.equal(forwarded[4].options.headers['x-lochire-kora-test-key'],'sk_test_private_gateway_fixture');
+ process.env.KORAPAY_TEST_SECRET_KEY='sk_test_private_gateway_fixture';await invoke({query:{path:'payments/premium/state'}});assert.equal(forwarded[4].options.headers['x-lochire-kora-test-key'],'sk_test_private_gateway_fixture');
  const denied=await invoke({method:'POST',query:{path:'payments/kora/account'},body:{consent:true}});assert.equal(denied.statusCode,403);
 });
 
@@ -129,4 +119,16 @@ test('custom domain mutations require an exact configured origin and preserve it
   const rejected=await invoke({method:'POST',query:{path:'auth/forgot'},headers:{origin},body:{email:'owner@example.test'}});assert.equal(rejected.statusCode,403);
  }
  assert.equal(forwarded.length,1);
+});
+
+test('private Kora test transport requires service authentication and rejects arbitrary operations',async()=>{
+ process.env.KORAPAY_TEST_SECRET_KEY='sk_test_private_gateway_fixture';
+ for(const headers of [{},{'x-lochire-provider-key':'wrong'}])assert.equal((await invoke({method:'POST',url:'/api/internal/kora',headers,body:{operation:'connection'}})).statusCode,403);
+ assert.equal(forwarded.length,0);
+ const headers={'x-lochire-provider-key':process.env.PAYMENT_SERVICE_SECRET};
+ for(const body of [{operation:'proxy',url:'https://evil.test'},{operation:'verify',reference:'../../users'},{operation:'initialize',payload:{amount:1}}])assert.equal((await invoke({method:'POST',url:'/api/internal/kora',headers,body})).statusCode,400);
+ assert.equal(forwarded.length,0);
+ global.fetch=async(url,options)=>{forwarded.push({url:String(url),options});return Response.json({status:true,data:[{name:'Test Bank',code:'999'}]});};
+ const response=await invoke({method:'POST',url:'/api/internal/kora',headers,body:{operation:'connection'}});assert.equal(response.statusCode,200);assert.equal(forwarded[0].url,'https://api.korapay.com/merchant/api/v1/misc/banks?countryCode=NG');assert.equal(forwarded[0].options.headers.Authorization,'Bearer sk_test_private_gateway_fixture');assert.doesNotMatch(response.body,/sk_test|test-service-secret/);
+ process.env.KORAPAY_TEST_SECRET_KEY='sk_live_not_allowed';assert.equal((await invoke({method:'POST',url:'/api/internal/kora',headers,body:{operation:'connection'}})).statusCode,503);
 });

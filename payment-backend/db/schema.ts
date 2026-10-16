@@ -186,3 +186,21 @@ export const koraTestEntries=sqliteTable('kora_test_entries',{
 export const koraTestMemberships=sqliteTable('kora_test_memberships',{
  userId:text('user_id').primaryKey().references(()=>users.id),expiresAt:text('expires_at').notNull(),
 });
+
+// Worker premium purchases. Test and live entitlements are separate and every
+// grant is owned by an immutable server-created order, never a browser email.
+export const koraPremiumOrders=sqliteTable('lh_kora_premium_orders',{
+ reference:text('reference').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),mode:text('mode').notNull(),tier:text('tier').notNull(),amount:integer('amount').notNull(),status:text('status').notNull(),claim:text('claim').notNull(),checkoutUrl:text('checkout_url'),createdAt:text('created_at').notNull(),paidAt:text('paid_at'),fees:integer('fees'),applied:integer('applied').notNull().default(0),
+},t=>[uniqueIndex('lh_kora_premium_claim').on(t.userId,t.mode,t.claim),index('lh_kora_premium_user').on(t.userId,t.mode),check('lh_kora_premium_amount',sql`${t.amount}>0`)]);
+export const premiumGrants=sqliteTable('lh_premium_grants',{
+ reference:text('reference').primaryKey().references(()=>koraPremiumOrders.reference),userId:text('user_id').notNull().references(()=>users.id),mode:text('mode').notNull(),tier:text('tier').notNull(),startsAt:text('starts_at').notNull(),expiresAt:text('expires_at').notNull(),revokedAt:text('revoked_at'),
+},t=>[index('lh_premium_grants_user').on(t.userId,t.mode,t.expiresAt)]);
+export const jobAlertPreferences=sqliteTable('lh_job_alert_preferences',{
+ userId:text('user_id').primaryKey().references(()=>users.id),enabled:integer('enabled').notNull().default(0),city:text('city').notNull(),area:text('area').notNull().default(''),category:text('category').notNull().default(''),
+});
+export const jobAlerts=sqliteTable('lh_job_alerts',{
+ notificationId:text('notification_id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),openingId:text('opening_id').notNull().references(()=>liveOpenings.id),createdAt:text('created_at').notNull(),
+},t=>[uniqueIndex('lh_job_alert_user_opening').on(t.userId,t.openingId)]);
+export const jobAlertOutbox=sqliteTable('lh_job_alert_outbox',{
+ openingId:text('opening_id').primaryKey().references(()=>liveOpenings.id,{onDelete:'cascade'}),processedAt:text('processed_at'),
+});

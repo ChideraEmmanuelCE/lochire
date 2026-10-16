@@ -1,3 +1,4 @@
+import {deliverWorkBacklog} from '../lib/work-backlog.mjs';
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
 import type { ConnectorBinding } from "../lib/connector-contract.mjs";
@@ -23,6 +24,11 @@ export default {
         },
       };
     }
-    return runWithConnectorBinding(binding, () => handler.fetch(request, env, ctx));
+    return runWithConnectorBinding(binding, async () => {
+      const response=await handler.fetch(request, env, ctx);
+      const path=new URL(request.url).pathname;
+      if(response.ok&&path.startsWith('/api/')&&(request.method==='POST'||path==='/api/hiring/state'))ctx.waitUntil(deliverWorkBacklog(env));
+      return response;
+    });
   },
 };

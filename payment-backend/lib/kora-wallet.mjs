@@ -28,7 +28,7 @@ const entry=(db,id,user,bucket,kind,value,ref,time,condition=gate)=>db.prepare('
 
 // Read-only public connectivity probe: cached for one minute, no account data.
 export async function checkKoraTestConnection(db,env){
- if(env.KORAPAY_MODE!=='test'||env.KORAPAY_SANDBOX_WALLET_ENABLED!=='true')fail(503,'Kora sandbox testing is disabled.');
+ if(env.KORAPAY_MODE!=='test'||env.KORAPAY_SANDBOX_WALLET_ENABLED!=='true'&&env.KORAPAY_PREMIUM_ENABLED!=='true')fail(503,'Kora sandbox testing is disabled.');
  const id='KORA-TEST-CONNECTION',cutoff=new Date(Date.now()-60000).toISOString(),time=at();
  let row=await one(db,'SELECT * FROM bank_events WHERE id=?',id);
  if(row&&row.created_at>cutoff)return {verified:row.state==='verified',mode:'test',status:row.state};

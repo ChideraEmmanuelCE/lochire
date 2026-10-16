@@ -1,3 +1,4 @@
+import {premiumState,premiumAccess,premiumFinance} from './premium.mjs';
 import {koraSandboxAvailable} from './kora-wallet.mjs';
 import { emailReady, requestAccountEmail } from './account-email.mjs';
 export { emailReady } from './account-email.mjs';
@@ -61,7 +62,7 @@ function distance(a,b){const rad=v=>v*Math.PI/180,h=Math.sin(rad(b.lat-a.lat)/2)
 export async function hiringState(db,user,env,request){
   const u=new URL(request.url),lat=Number(u.searchParams.get('lat')),lon=Number(u.searchParams.get('lon'));
   const searchPoint=u.searchParams.has('lat')&&u.searchParams.has('lon')&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180?{lat,lon}:null;
-  const rows=await all(db,'SELECT * FROM live_profiles WHERE published=1 AND suspended=0 ORDER BY updated_at DESC LIMIT 1000');
+  const rows=await all(db,'SELECT * FROM live_profiles WHERE published=1 AND suspended=0 ORDER BY updated_at DESC');
   const ownRows=user?await all(db,'SELECT * FROM live_profiles WHERE user_id=?',user.id):[];
   const blocks=user?await all(db,'SELECT actor,target FROM live_blocks WHERE actor IN (SELECT id FROM live_profiles WHERE user_id=?) OR target IN (SELECT id FROM live_profiles WHERE user_id=?)',user.id,user.id):[];
   const blockedProfiles=new Set(blocks.flatMap(b=>[b.actor,b.target]).filter(pid=>!ownRows.some(p=>p.id===pid)));
@@ -73,9 +74,13 @@ export async function hiringState(db,user,env,request){
     if(searchPoint&&p.coordinates&&Date.now()-p.coordinates.at<86400000)safe.distance={metres:Math.round(distance(searchPoint,p.coordinates)/100)*100,accuracy:Math.ceil(p.coordinates.accuracy/100)*100};
     return safe;
   });
-  const premiumUsers=new Set((await all(db,'SELECT user_id FROM lh_memberships WHERE mode=? AND expires_at>?',env.PAYSTACK_MODE==='test'?'test':'live',now())).map(m=>m.user_id));
-  const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC LIMIT 1000")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>publicOpening({...decoded(r),status:r.status,premium:premiumUsers.has(r.owner_user)}));
-  if(user){for(const row of await all(db,'SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE p.user_id=?',user.id)){const o={...decoded(row),status:row.status,premium:premiumUsers.has(row.owner_user)},i=openings.findIndex(x=>x.id===o.id);if(i>=0)openings[i]=o;else openings.push(o);}}
+  const access=await premiumAccess(db,user,env);
+  const participantOpenings=new Set(user?(await all(db,'SELECT opening_id FROM live_engagements WHERE worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?)',user.id,user.id)).map(r=>r.opening_id):[]);
+  const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>{
+    const o=publicOpening({...decoded(r),status:r.status});
+    if(env.PAYMENTS_PRODUCT==='legacy'||r.owner_user===user?.id||access.active||participantOpenings.has(r.id))return {...o,locked:false};
+    return {id:o.id,title:o.title,type:o.type,category:o.category,city:o.city,area:o.area,min:o.min,max:o.max,quote:o.quote,basis:o.basis,status:o.status,locked:true};
+  });
   let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
   // Profiles belonging to an active conversation remain visible to its participants.
@@ -87,7 +92,7 @@ export async function hiringState(db,user,env,request){
   const payments=user?await all(db,'SELECT p.* FROM live_payments p JOIN live_profiles a ON a.id=p.payer JOIN live_profiles b ON b.id=p.recipient WHERE a.user_id=? OR b.user_id=? ORDER BY created_at DESC LIMIT 250',user.id,user.id):[];
   const hirer=ownRows.find(r=>r.role==='employer'&&r.published&&!r.suspended);
   const workerMatches=hirer?await workerMatchFeed(db,hirer.id):[];
-  return {koraSandboxAvailable:koraSandboxAvailable(user,env),workerMatches,...await onlineState(db,user,env),...await billingState(db,user,env),version:4,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,activeRole:walletRole?.active_role,emailVerified:!!settings?.email_verified_at,emailAlertsEnabled:settings?.hiring_email_enabled!==0}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
+  return {workerMatches,...(env.PAYMENTS_PRODUCT==='legacy'?{koraSandboxAvailable:koraSandboxAvailable(user,env),...await onlineState(db,user,env),...await billingState(db,user,env)}:await premiumState(db,user,env)),version:5,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,activeRole:walletRole?.active_role,emailVerified:!!settings?.email_verified_at,emailAlertsEnabled:settings?.hiring_email_enabled!==0}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
 }
 async function engagementFor(db,user,gid){const row=await first(db,'SELECT g.* FROM live_engagements g WHERE id=? AND (worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?))',gid,user.id,user.id);if(!row)fail(404,'This engagement is not available to your account.');return row;}
 async function mutate(db,row,g,target,kind,title,extra=[]){
@@ -117,8 +122,10 @@ export async function hiringAction({db,user,env,request,body,path}){
       const r=await run(db,'UPDATE live_openings SET data=?,status=?,revision=revision+1 WHERE id=? AND revision=?',JSON.stringify(o),o.status,row.id,row.revision);if(r.meta?.changes===0)fail(409,'This opening changed. Refresh and try again.');
     }else {const o=openingData(body,employer),oid=body.requestId?'OPN-'+text(body.requestId,'request reference',100):id('OPN');o.id=oid;const prior=await first(db,'SELECT * FROM live_openings WHERE id=?',oid);if(prior){if(prior.employer_id!==employer.id||prior.data!==JSON.stringify(o))fail(409,'Request reference already used.');return hiringState(db,user,env,request);}await run(db,'INSERT INTO live_openings (id,employer_id,status,data,revision,created_at) VALUES (?,?,\'Open\',?,1,?)',oid,employer.id,JSON.stringify(o),now());}
     await syncWorkerMatches(db,{employerId:employer.id});
+
   }else if(kind==='engagements'&&!parts[2]){
     const role=choose(body.role,['worker','employer'],'role'),mine=await ownProfile(db,user,role);
+    if(role==='worker'&&env.PAYMENTS_PRODUCT!=='legacy'&&!(await premiumAccess(db,user,env)).active)fail(403,'Upgrade to Premium to unlock jobs and express interest. Invitations sent to you remain free to answer.');
     let openingRow;
     if(body.booking){
       if(role!=='employer')fail(403,'Switch to Hiring to request a booking.');
@@ -220,7 +227,8 @@ async function respondToMatch({db,user,env,request,body,parts}){
 
 export async function adminRoute({db,user,env,request,body,path,passwordHash}){
   if(!await admin(db,user,env))fail(403,'Administrator access is required.');
-  if(path.startsWith('admin/finance'))return financeAction({db,user,env,request,body,path,passwordHash});
+  if(path==='admin/finance'&&env.PAYMENTS_PRODUCT!=='legacy'&&request.method==='GET')return premiumFinance(db,env);
+  if(path.startsWith('admin/finance')){if(env.PAYMENTS_PRODUCT!=='legacy')fail(410,'Salary, wallet and Paystack controls have been retired. Premium revenue is available in the dashboard.');return financeAction({db,user,env,request,body,path,passwordHash});}
   if(path==='admin/dashboard'&&request.method==='GET')return adminOverview(db,request);
   if(path!=='admin/reports')fail(404,'Admin route not found.');
   if(request.method==='GET')return {reports:await all(db,'SELECT id,target,kind,reason,details,status,resolution,created_at FROM live_reports ORDER BY created_at DESC LIMIT 250'),counts:{accounts:(await first(db,'SELECT COUNT(*) AS n FROM users')).n,profiles:(await first(db,'SELECT COUNT(*) AS n FROM live_profiles')).n,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n}};

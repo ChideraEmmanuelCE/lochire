@@ -1,106 +1,30 @@
-# Kora sandbox wallet
+# LocHire premium access through Kora
 
-Notification URL: https://lochire.ng/api/webhooks/korapay
-Private test screen: https://lochire.ng/#bank-sandbox
+LocHire sells worker access, not salary processing, deposits or withdrawals.
 
-## Current behavior
+* Premium: NGN 900 for 30 days, unlocking full job details and expressions of interest.
+* Premium Plus: NGN 1,200 for 30 days, with new nearby-job emails matched by city, optional area and service.
+* Manual renewal only. Plus purchases start a full 30-day Plus pass without prorating overlapping access. Same-tier renewals extend the existing pass.
+* Published worker profiles and hirer invitations stay free. The directory starts with all published, unsuspended and unblocked workers; location is an optional filter.
 
-This integration is **sandbox-only**. It cannot move real money, activate live
-premium listings or change live work payment records. Kora's wallet API wrapper
-rejects live mode and live credentials even if the business approval flag is set.
-Existing direct-payment and Paystack functionality remains unchanged.
+Checkout is created on the server for the authenticated user's ID, account email and a server-controlled amount. The browser cannot supply another beneficiary. Kora signs notifications; the server independently queries reference, currency, amount and account email. A database transaction grants each verified order once. Test and live entitlements are separate. Revoked or refunded passes lose their associated grant without removing unrelated passes.
 
-Access requires a verified LocHire email in `ADMIN_EMAILS` or
-`KORAPAY_TESTER_EMAILS`, plus `KORAPAY_SANDBOX_WALLET_ENABLED=true` and
-`KORAPAY_MODE=test`. The menu is private to these accounts. Hiring mode can add
-test funds, buy test premium and pay a separate approved worker for mutually
-confirmed work. Finding work mode can withdraw only test earnings.
+`PAYMENTS_PRODUCT=premium` is the deployed product. The `legacy` setting exists only for historical regression fixtures; do not enable it in production. Old payment tables are retained as records and do not provide current premium entitlements.
 
-The isolated `kora_test_*` tables hold transfer accounts, verified deposits,
-hirer funds, worker earnings, operation claims, receipts and test memberships.
-These tables are never included in the live credit balance or live premium
-eligibility. Migration 0014 is additive and preserves existing data.
+## Test configuration
 
-## Configure
+`KORAPAY_MODE=test`, `KORAPAY_PREMIUM_ENABLED=true`, `KORAPAY_WEBHOOKS_ENABLED=true`, and `KORAPAY_PREMIUM_TEST_USERS` restrict simulated checkout to explicitly approved accounts. Vercel stores `KORAPAY_TEST_SECRET_KEY` privately. Its gateway relays only its own saved test key to the authenticated backend for signature verification. Clients cannot override it.
 
-The owner saves `KORAPAY_TEST_SECRET_KEY` as a **Secret** for the LocHire Vercel
-project's Production environment, then redeploys. Production here describes the
-hosting environment; the Kora key must still start `sk_test_`. Never post it in
-chat, browser code, logs or the repository.
+`KORAPAY_TEST_API_PROXY_URL=https://lochire.ng/api/internal/kora` optionally routes test provider operations through the existing Vercel gateway. This route uses the private service credential, a fixed Kora origin and a small operation allowlist. It rejects live keys, arbitrary URLs, altered prices and off-site callback destinations. It does not expose a browser-accessible payment API or credentials.
 
-Private Sites runtime configuration:
+The webhook remains `https://lochire.ng/api/webhooks/korapay`. Test checkout stays private and ordinary members see an honest pending-activation notice.
 
-- `KORAPAY_MODE=test`
-- `KORAPAY_WEBHOOKS_ENABLED=true`
-- `KORAPAY_ALLOW_TEST_KEY_RELAY=true`
-- `KORAPAY_SANDBOX_WALLET_ENABLED=true`
-- `KORAPAY_BUSINESS_APPROVED=false`
-- `KORAPAY_TESTER_EMAILS=` (optional comma-separated extra test accounts)
+## Live activation
 
-Alternatively, save `KORAPAY_SECRET_KEY` directly as a private Sites secret. A
-native Sites key takes precedence. The gateway sends its own test key over HTTPS
-only to the Kora webhook and `/api/payments/kora/*` routes, after dropping
-client-supplied copies. Private-service authentication precedes reading the key;
-the backend never persists or returns it. App mutations still require an exact
-allowed Origin, authenticated session, verified email and tester access.
+Keep live checkout unavailable until Kora approval, private live-key configuration and provider-backed end-to-end checkout testing succeed. The live backend requires `KORAPAY_MODE=live`, `KORAPAY_BUSINESS_APPROVED=true`, `KORAPAY_PREMIUM_ENABLED=true`, and a private native `KORAPAY_SECRET_KEY` starting with `sk_live_`. Live traffic does not use the test-only Vercel transport. Never place keys in source, public configuration or chat.
 
-A read-only connectivity probe at the notification URL with
-`?check=connection` checks Kora's bank-list API and caches the public boolean
-result for one minute. It exposes no keys, bank accounts or customer data.
-`webhookReady=true` alone proves configuration, not provider API access.
+## Email delivery
 
-## Test journey
+New openings atomically create a durable alert outbox task. Fan-out targets only verified opted-in users whose live Plus pass existed before the job was posted. Existing jobs are not replayed on subscription. A job/user uniqueness constraint prevents duplicate alerts. Before sending, the system rechecks membership, expiry, visibility, preferences and blocks. Resend idempotency keys and database leases protect retries. Background delivery continues after the response, with pending records retried on later successful application activity. Closed jobs, expired passes and disabled preferences suppress queued alerts.
 
-1. Sign in using an approved verified account and open More > Bank transfer
-   sandbox. Use Test API connection to confirm provider access.
-2. Switch to Hiring and create/check the test account. The backend uses Kora's
-   sandbox bank code `000` and published test BVN `22222222222`. No real identity
-   or bank credentials are requested. A creation timeout keeps the same account
-   reference; retries query it instead of creating another account.
-3. Simulate a deposit. This calls Kora's sandbox-credit API only. Submission alone
-   does not change any balance. Never transfer real money to the displayed test
-   account number.
-4. Check deposits. Each payment is queried independently; the verified account
-   number and account reference must match the account owned by this user.
-   Available test funds equal the verified paid amount less the provider fee.
-   Signed callbacks run the same credit routine. Duplicate callbacks and
-   reconciliation credit once atomically. Check history pages until complete;
-   the UI's Check deposits button advances to the next page when one exists.
-5. Buy test premium. A test membership lasts 30 days and never features a live
-   listing. The configured premium price is used, with a test-only ₦1,000
-   fallback when no live price has been configured.
-6. To test paying work, add a second verified tester to the allowlist. Create
-   private/unpublished test profiles and confirm the scope/pay with both people.
-   A work period/version has one deterministic test payment reference. The hirer
-   is debited the agreed amount; worker earnings receive the amount less the
-   configured LocHire commission. No live payment acknowledgement is inserted.
-7. In the worker account, request a test withdrawal. Only Kora's published test
-   accounts are used: UBA `033` / `0000000000` for success and Wema `035` /
-   `0000000000` for failure. Provider fees may reduce the simulated bank receipt.
-   Password confirmation and consent are required for balance purchases and
-   withdrawals. Hirer funding cannot be withdrawn as worker earnings.
-8. A withdrawal reserves earnings before the provider POST. Ambiguous errors keep
-   them reserved; Check payout queries the original reference, never resubmits
-   the POST. Only a verified failure/reversal restores earnings, once. A later
-   contradictory success freezes the wallet for review. A successful query
-   confirms Kora's test result, not a real bank receipt.
-
-## Before real money
-
-Kora must approve the unregistered marketplace's actual virtual-account,
-customer-balance and worker-payout model. KYC approval alone does not establish
-that product access. This code deliberately cannot be enabled for real wallet
-payments with an environment switch.
-
-A separate live implementation/review is required for real customer KYC and
-bank-account ownership, settlement availability/liquidity, fees, deposit
-refunds/reversals/chargebacks, withdrawal recovery and reconciliation, and any
-required safeguarding arrangement. Sandbox failures use synthetic provider
-fixtures; actual provider provisioning/access must also be verified. Do not
-advertise live bank funding while these requirements remain outstanding.
-
-Official contracts:
-- https://developers.korapay.com/docs/virtual-bank-accounts-ngn
-- https://developers.korapay.com/docs/webhooks
-- https://developers.korapay.com/docs/payout-via-api
-- https://developers.korapay.com/docs/testing-your-integration
+Configure `RESEND_API_KEY` privately and a verified `EMAIL_FROM` sender. The queue is not a promise of a hire or exclusive access. Monitor failed/review queue statuses and Kora settlement in the owner dashboards.
