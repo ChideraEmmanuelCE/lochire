@@ -217,3 +217,7 @@ export const accountLocks=sqliteTable('account_locks',{
 export const accountLockEvents=sqliteTable('account_lock_events',{
  id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),actorId:text('actor_id').notNull().references(()=>users.id),action:text('action').notNull(),reason:text('reason').notNull(),untilAt:integer('until_at'),createdAt:text('created_at').notNull(),
 });
+
+export const messageViews=sqliteTable('message_views',{
+ messageId:text('message_id').primaryKey(),engagementId:text('engagement_id').notNull().references(()=>liveEngagements.id),viewerId:text('viewer_id').notNull().references(()=>users.id),viewedAt:integer('viewed_at').notNull(),expiresAt:integer('expires_at').notNull(),purged:integer('purged').notNull().default(0),
+},t=>[index('message_views_expiry').on(t.purged,t.expiresAt),index('message_views_engagement').on(t.engagementId)]);

@@ -1,3 +1,4 @@
+import {messageViews,visibleMessages,purgeExpiredMessages,markMessagesViewed} from './message-expiry.mjs';
 import {calendarDate,reviewEligibility} from './eligibility.mjs';
 import {premiumState,premiumAccess,premiumFinance} from './premium.mjs';
 import {koraSandboxAvailable} from './kora-wallet.mjs';
@@ -61,6 +62,7 @@ const publicOpening=o=>{const {postcode,...safe}=o;return safe;};
 function distance(a,b){const rad=v=>v*Math.PI/180,h=Math.sin(rad(b.lat-a.lat)/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(rad(b.lon-a.lon)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(Math.max(0,1-h)));}
 
 export async function hiringState(db,user,env,request){
+  await purgeExpiredMessages(db);
   const u=new URL(request.url),lat=Number(u.searchParams.get('lat')),lon=Number(u.searchParams.get('lon'));
   const searchPoint=u.searchParams.has('lat')&&u.searchParams.has('lon')&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180?{lat,lon}:null;
   const rows=await all(db,'SELECT * FROM available_live_profiles WHERE published=1 AND suspended=0 ORDER BY updated_at DESC');
@@ -84,7 +86,7 @@ export async function hiringState(db,user,env,request){
   });
   let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
-  engagements=engagements.map(g=>({...g,reviewEligibility:reviewEligibility(g)}));
+  engagements=await Promise.all(engagements.map(async g=>({...g,messages:visibleMessages(g.messages,await messageViews(db,g)),reviewEligibility:reviewEligibility(g)})));
   // Profiles belonging to an active conversation remain visible to its participants.
   const participantIds=[...new Set(engagements.flatMap(g=>[g.workerId,g.employerId]))];
   for(const pid of participantIds)if(!published.some(p=>p.id===pid)){const r=await first(db,'SELECT * FROM available_live_profiles WHERE id=?',pid);if(r)published.push(publicProfile(decoded(r)));}
@@ -108,6 +110,7 @@ async function mutate(db,row,g,target,kind,title,extra=[]){
 export async function hiringAction({db,user,env,request,body,path}){
   if(!user)fail(401,'Sign in to LocHire first.');
   const parts=path.split('/'),kind=parts[1];
+  if(kind==='engagements')await purgeExpiredMessages(db);
   if(kind==='presence'){await recordPresence(db,user.id);return {ok:true};}
   if(kind==='matches'){return respondToMatch({db,user,env,request,body,parts});}
   if(kind==='profiles'){
@@ -119,7 +122,8 @@ export async function hiringAction({db,user,env,request,body,path}){
     const employer=await ownProfile(db,user,'employer');
     if(parts[2]){
       const row=await first(db,'SELECT * FROM live_openings WHERE id=? AND employer_id=?',parts[2],employer.id);if(!row)fail(404,'Opening not found.');
-      if(body.revision!==row.revision)fail(409,'This opening changed. Refresh before saving.');
+      if(action==='viewed'){if(!Array.isArray(body.messageIds)||body.messageIds.length>100||body.messageIds.some(v=>typeof v!=='string'||v.length>100))fail(400,'Choose valid messages.');const views=await markMessagesViewed(db,g,user,actor,body.messageIds);return {ok:true,views:views.map(v=>({id:v.message_id,viewedAt:new Date(v.viewed_at).toISOString(),expiresAt:new Date(v.expires_at).toISOString()}))};}
+    if(body.revision!==row.revision)fail(409,'This opening changed. Refresh before saving.');
       const o=body.action==='status'?{...decoded(row),status:choose(body.status,['Open','Closed'],'status')}:{...openingData(body,employer),id:row.id,status:row.status};
       const r=await run(db,'UPDATE live_openings SET data=?,status=?,revision=revision+1 WHERE id=? AND revision=?',JSON.stringify(o),o.status,row.id,row.revision);if(r.meta?.changes===0)fail(409,'This opening changed. Refresh and try again.');
     }else {const o=openingData(body,employer),oid=body.requestId?'OPN-'+text(body.requestId,'request reference',100):id('OPN');o.id=oid;const prior=await first(db,'SELECT * FROM live_openings WHERE id=?',oid);if(prior){if(prior.employer_id!==employer.id||prior.data!==JSON.stringify(o))fail(409,'Request reference already used.');return hiringState(db,user,env,request);}await run(db,'INSERT INTO live_openings (id,employer_id,status,data,revision,created_at) VALUES (?,?,\'Open\',?,1,?)',oid,employer.id,JSON.stringify(o),now());}
@@ -149,6 +153,7 @@ export async function hiringAction({db,user,env,request,body,path}){
       await db.batch([db.prepare("INSERT OR IGNORE INTO live_engagements (id,opening_id,worker_id,employer_id,status,data,revision,created_at) VALUES (?,?,?,?,'Pending',?,1,?)").bind(gid,o.id,w.id,e.id,JSON.stringify(g),at),notices(db,role==='worker'?e.user_id:w.user_id,'invitation','New invitation: '+o.title,gid,at,'NOT-'+gid+'-created')]);}
   }else if(kind==='engagements'&&parts[2]){
     const row=await engagementFor(db,user,parts[2]),g=decoded(row),myProfiles=await all(db,'SELECT id FROM available_live_profiles WHERE user_id=?',user.id),actor=myProfiles.find(p=>p.id===g.workerId||p.id===g.employerId)?.id,target=actor===g.workerId?g.employerId:g.workerId,action=parts[3];
+    if(action==='viewed'){if(!Array.isArray(body.messageIds)||body.messageIds.length>100||body.messageIds.some(v=>typeof v!=='string'||v.length>100))fail(400,'Choose valid messages.');const views=await markMessagesViewed(db,g,user,actor,body.messageIds);return {ok:true,views:views.map(v=>({id:v.message_id,viewedAt:new Date(v.viewed_at).toISOString(),expiresAt:new Date(v.expires_at).toISOString()}))};}
     if(body.revision!==row.revision)fail(409,'The conversation changed. Refresh and try again.');
     if(action!=='review'&&await isBlocked(db,actor,target))fail(403,'Contact is blocked.');
     const at=now();let title='Conversation updated: '+g.title;

@@ -114,3 +114,28 @@ test('logout revokes only the session; fresh login restores both profiles and th
  assert.equal((await h.call('auth/logout',{},u)).status,200);const signedOut=(await h.call('hiring/state',undefined,u)).data;assert.equal(signedOut.user,null);assert.equal(signedOut.worker,null);assert.ok(signedOut.workers.some(w=>w.id===before.worker.id));
  const login=await h.call('auth/login',{email:'savedaccount@example.test',password:'SecureFixturePassword123!'});assert.equal(login.status,200);assert.notEqual(login.cookie,u.cookie);assert.equal(login.data.user.id,u.id);assert.equal(login.data.user.activeRole,'worker');assert.deepEqual(login.data.worker,before.worker);assert.deepEqual(login.data.employer,before.employer);const restored=(await h.call('hiring/state',undefined,{cookie:login.cookie})).data;assert.deepEqual(restored.worker,before.worker);assert.deepEqual(restored.employer,before.employer);
 });
+
+test('messages expire for both people exactly two hours after recipient viewing, never on send or inbox refresh',async()=>{
+ const h=harness(),{e,w,outsider,oid}=await h.setup(),gid=await h.invite(e,w,oid);
+ const original=Date.now;let clock=original();Date.now=()=>clock;
+ try{
+  const initial=await h.current(e,gid),message=initial.messages[0],revision=initial.revision;
+  clock+=3*3600000;
+  assert.equal((await h.current(w,gid)).messages.length,1,'fetching inbox does not mark viewed');
+  const receipt=ids=>({messageIds:ids,viewedAt:'2000-01-01',expiresAt:'2000-01-01',actor:w.profile});
+  assert.equal((await h.call('hiring/engagements/'+gid+'/viewed',receipt([message.id]),outsider)).status,404);
+  await h.call('hiring/engagements/'+gid+'/viewed',receipt([message.id]),e);
+  assert.equal((await h.current(e,gid)).messages[0].viewedAt,null,'sender cannot start their own timer');
+  let r=await h.call('hiring/engagements/'+gid+'/viewed',receipt([message.id]),w);assert.equal(r.status,200);assert.equal(Date.parse(r.data.views[0].viewedAt),clock);assert.equal(Date.parse(r.data.views[0].expiresAt),clock+7200000);
+  assert.equal((await h.current(e,gid)).revision,revision,'read receipt does not conflict with sending');
+  const viewed=clock;clock+=60000;
+  r=await h.call('hiring/engagements/'+gid+'/viewed',receipt([message.id]),w);assert.equal(Date.parse(r.data.views[0].viewedAt),viewed,'repeated views never reset the timer');
+  r=await h.call('hiring/engagements/'+gid+'/message',{revision,text:'Unread follow-up'},e);assert.equal(r.status,200);
+  clock=viewed+7200000-1;assert.equal((await h.current(w,gid)).messages.length,2);
+  clock++;
+  for(const person of [e,w]){const g=await h.current(person,gid);assert.equal(g.messages.length,1);assert.equal(g.messages[0].text,'Unread follow-up');assert.equal(g.messages[0].viewedAt,null);}
+  const raw=await h.db.prepare('SELECT data FROM live_engagements WHERE id=?').bind(gid).first();assert.equal(raw.data.includes(message.text),false,'expired message body is purged from storage');assert.equal(JSON.parse(raw.data).history.length,2,'work history remains');
+  assert.equal((await h.call('hiring/engagements/'+gid+'/message',{revision,text:'Old tab write'},w)).status,409,'stale writes cannot restore expired text');
+  assert.equal((await h.call('hiring/engagements/'+gid+'/viewed',{messageIds:'all'},w)).status,400);
+ }finally{Date.now=original;}
+});

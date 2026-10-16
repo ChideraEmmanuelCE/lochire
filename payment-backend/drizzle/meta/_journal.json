@@ -141,6 +141,13 @@
       "when": 1792162250247,
       "tag": "0019_account_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792183030958,
+      "tag": "0020_message_views",
+      "breakpoints": true
     }
   ]
 }

@@ -229,3 +229,20 @@ test('month shortcut shows the agreed end date and reviews stay locked even afte
   assert.equal(e.w.LocHire.jobEndDate('2027-01-31','month'),'2027-02-28');assert.equal(e.w.LocHire.jobEndDate('2028-01-31','month'),'2028-02-29');assert.equal(f.errors.length,0);
  }finally{w.close();e.close();}
 });
+
+test('chat viewing starts recipient-only expiry and expired bubbles clear without erasing a draft',async()=>{
+ const f=await fixture(),w=f.browser(),e=f.browser();try{
+  await tick();await register(w,'chatworker');await createProfile(w,true);await register(e,'chathirer');await switchRole(e,'employer');await createProfile(e,false);
+  const worker=f.sqlite.prepare("SELECT id FROM live_profiles WHERE role='worker'").get().id,employer=f.sqlite.prepare("SELECT id FROM live_profiles WHERE role='employer'").get().id;
+  const at=new Date().toISOString(),oid='OPN-chat',gid='ENG-chat';
+  f.sqlite.prepare('INSERT INTO live_openings(id,employer_id,status,data,revision,created_at) VALUES(?,?,?,?,1,?)').run(oid,employer,'Open',JSON.stringify({id:oid,title:'Chat repair',type:'One-off task',category:'Plumbing',city:'Ibadan',area:'Jericho'}),at);
+  const g={id:gid,openingId:oid,workerId:worker,employerId:employer,title:'Chat repair',status:'Accepted',initiator:worker,version:0,terms:null,confirmations:{},completion:{},history:[],messages:[{id:'MSG-chat',actor:worker,text:'Is tomorrow okay?',at}]};
+  f.sqlite.prepare('INSERT INTO live_engagements(id,opening_id,worker_id,employer_id,status,data,revision,created_at) VALUES(?,?,?,?,?,?,1,?)').run(gid,oid,worker,employer,'Accepted',JSON.stringify(g),at);
+  w.w.dispatchEvent(new w.w.Event('focus'));await tick();w.w.location.hash='#record/'+gid;await tick();await tick();assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM message_views').get().n,0,'sender viewing does not start timer');
+  e.w.dispatchEvent(new e.w.Event('focus'));await tick();assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM message_views').get().n,0,'inbox refresh is not viewing');
+  e.w.location.hash='#record/'+gid;await tick();await tick();const view=f.sqlite.prepare('SELECT * FROM message_views').get();assert.ok(view);assert.equal(view.expires_at-view.viewed_at,7200000);assert.match(e.w.document.querySelector('.message-status').textContent,/Viewed/);
+  w.w.dispatchEvent(new w.w.Event('focus'));await tick();assert.match(w.w.document.querySelector('.message-status').textContent,/Seen/);fill(w,{text:'My unsent draft'});
+  f.sqlite.prepare('UPDATE message_views SET expires_at=?').run(Date.now()-1000);
+  w.w.dispatchEvent(new w.w.Event('focus'));await tick();await new Promise(resolve=>setTimeout(resolve,1100));assert.equal(w.w.document.querySelector('.message[data-message-id]'),null);assert.equal(w.w.document.querySelector('[name="text"]').value,'My unsent draft');assert.equal(f.errors.length,0);
+ }finally{w.close();e.close();}
+});
