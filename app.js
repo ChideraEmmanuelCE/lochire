@@ -105,9 +105,11 @@ function notificationsPage(){main.innerHTML=head('Your inbox.','Saved invitation
 let financeLoad=0;
 function walletPage(){premiumPage();}
 function premiumPage(){
+ const manageAlerts=new URL(location.href).searchParams.get('manage_job_alerts')==='1';
  const access=state.premium||{},ready=state.provider?.ready,plans=state.plans||[{id:'access',name:'Premium',amount:90000,days:30,alerts:false},{id:'alerts',name:'Premium Plus',amount:120000,days:30,alerts:true}],test=state.provider?.mode==='test';
  const preferences=state.alertPreferences||{enabled:true,city:state.worker?.city||'',area:state.worker?.area||'',category:state.worker?.occupation||''};
  main.innerHTML=head('More opportunities. Close to you.','Choose the job access that works for you.')+
+  (manageAlerts&&!state.user?`<section class="panel"><h2>Manage nearby job emails</h2><p>Sign in with the account that received the email to change your preferences.</p>${btn('Sign in to manage alerts','manage-job-alerts',true)}</section>`:manageAlerts&&!state.worker?`<section class="panel"><h2>Your worker profile</h2><p>Create a worker profile to choose your job alert preferences.</p>${btn('Create worker profile','be-worker',true)}</section>`:'')+
   (test?'<p class="form-status" role="status">Private test checkout · simulated payments. Test passes do not unlock another account or enable live job emails.</p>':'')+
   (access.active?`<section class="panel premium-current"><span class="badge premium-badge">${access.tier==='alerts'?'Premium Plus':'Premium'} active</span><h2>Your jobs are unlocked</h2><p>Access until ${at(access.expiresAt)}.${access.alerts?' Nearby email alerts until '+at(access.alertsExpiresAt)+'.':''}</p>${btn('Explore jobs','discover',true)}</section>`:'')+
   `<div class="premium-plans">${plans.map(plan=>`<section class="panel premium-plan ${plan.alerts?'premium-plus':''}"><span class="badge premium-badge">${plan.alerts?'Access + alerts':'Job access'}</span><h2>${esc(plan.name)}</h2><div class="checkout-amount">${money(plan.amount/100)}<span>One payment · 30 days · no automatic renewal</span></div><ul><li>Unlock full job details and express interest</li><li>Explore jobs in your area or across other locations</li><li>${plan.alerts?'New nearby jobs emailed when they match your preferences':'Find new jobs whenever you open LocHire'}</li></ul>${btn(access.active?'Buy / renew '+esc(plan.name):'Choose '+esc(plan.name),'premium-buy',true,`data-tier="${plan.id}" ${ready?'':'disabled'}`)}</section>`).join('')}</div>`+
@@ -116,7 +118,9 @@ function premiumPage(){
   (state.user&&state.worker?disclosure('job-alerts','Nearby job email preferences',`<form id="job-alerts-form" class="live-form">${check('enabled','Email me new matching jobs while Premium Plus is active.',preferences.enabled)}${field('city','City',preferences.city,'text','required maxlength="70"')}${field('area','Area (leave blank for the whole city)',preferences.area,'text','maxlength="90"')}${select('category','Service',[['','All services'],...D.categories],preferences.category)}<p class="caption">Alerts use your selected city, area and service. Only newly posted matching jobs are emailed. You can turn them off here at any time. Hirer invitations and account-security emails have separate settings.</p>${errorBox()}<button type="submit" class="button secondary">Save alert preferences</button></form>`,access.alerts?'Included in your Plus pass':'Requires Premium Plus'):'')+
   disclosure('premium-orders','Your premium purchases',(state.premiumOrders||[]).map(o=>`<article class="payment-record"><strong>${o.tier==='alerts'?'Premium Plus':'Premium'} · ${money(o.amount/100)}</strong><p>${esc(o.status)}${o.mode==='test'?' · Test payment':''} · ${at(o.createdAt)}</p><p class="caption">${esc(o.reference)}</p>${btn('Check payment','premium-check',false,pidAttr(o.reference))}</article>`).join('')||'<p>No purchases yet.</p>','Saved to your account')+
   `<section class="panel"><h2>Work payments stay between you</h2><p>Agree salary or task payments directly with the hirer. Exchange bank details privately when you are comfortable. LocHire charges only for its premium services.</p>${btn('My work','engagements')}</section>`;
+ if(manageAlerts&&state.user&&state.worker)disclosures.set('premium//job-alerts',true);
  restoreDisclosures();
+ if(manageAlerts&&state.user&&state.worker){const panel=main.querySelector('[data-disclosure="job-alerts"]');if(panel){panel.open=true;panel.querySelector('input')?.focus({preventScroll:true});panel.scrollIntoView?.({block:'start'});}const url=new URL(location.href);url.searchParams.delete('manage_job_alerts');history.replaceState(null,'',url.href);}
 }
 function premiumBuy(tier='access'){
  if(!requireAccount(()=>premiumBuy(tier)))return;
@@ -177,6 +181,7 @@ document.addEventListener('click',async event=>{const b=event.target.closest('bu
   else if(action==='edit-profile'){if(requireAccount(()=>go('edit-profile')))go('edit-profile');}
   else if(action==='admin-login'){pending=()=>go('admin');auth();}
   else if(action==='share-worker'||action==='share-hirer')await shareJoin(action==='share-worker'?'worker':'hirer');
+  else if(action==='manage-job-alerts'){if(requireAccount(()=>go('premium')))go('premium');}
   else if(action==='premium-buy')premiumBuy(b.dataset.tier);
   else if(action==='premium-check')await checkPremium(id);
   else if(action==='finance-refresh')financePage();

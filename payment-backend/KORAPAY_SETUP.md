@@ -15,16 +15,18 @@ Checkout is created on the server for the authenticated user's ID, account email
 
 `KORAPAY_MODE=test`, `KORAPAY_PREMIUM_ENABLED=true`, `KORAPAY_WEBHOOKS_ENABLED=true`, and `KORAPAY_PREMIUM_TEST_USERS` restrict simulated checkout to explicitly approved accounts. Vercel stores `KORAPAY_TEST_SECRET_KEY` privately. Its gateway relays only its own saved test key to the authenticated backend for signature verification. Clients cannot override it.
 
-`KORAPAY_TEST_API_PROXY_URL=https://lochire.ng/api/internal/kora` optionally routes test provider operations through the existing Vercel gateway. This route uses the private service credential, a fixed Kora origin and a small operation allowlist. It rejects live keys, arbitrary URLs, altered prices and off-site callback destinations. It does not expose a browser-accessible payment API or credentials.
+Provider requests use a fixed Kora API origin with manual redirect handling. The backend rejects 3xx responses without following them or forwarding credentials. This is compatible with the deployed Worker runtime.
 
 The webhook remains `https://lochire.ng/api/webhooks/korapay`. Test checkout stays private and ordinary members see an honest pending-activation notice.
 
 ## Live activation
 
-Keep live checkout unavailable until Kora approval, private live-key configuration and provider-backed end-to-end checkout testing succeed. The live backend requires `KORAPAY_MODE=live`, `KORAPAY_BUSINESS_APPROVED=true`, `KORAPAY_PREMIUM_ENABLED=true`, and a private native `KORAPAY_SECRET_KEY` starting with `sk_live_`. Live traffic does not use the test-only Vercel transport. Never place keys in source, public configuration or chat.
+Keep live checkout unavailable until Kora approval, private live-key configuration and provider-backed end-to-end checkout testing succeed. The live backend requires `KORAPAY_MODE=live`, `KORAPAY_BUSINESS_APPROVED=true`, `KORAPAY_PREMIUM_ENABLED=true`, and a private native `KORAPAY_SECRET_KEY` starting with `sk_live_`. Never place keys in source, public configuration or chat.
 
 ## Email delivery
 
 New openings atomically create a durable alert outbox task. Fan-out targets only verified opted-in users whose live Plus pass existed before the job was posted. Existing jobs are not replayed on subscription. A job/user uniqueness constraint prevents duplicate alerts. Before sending, the system rechecks membership, expiry, visibility, preferences and blocks. Resend idempotency keys and database leases protect retries. Background delivery continues after the response, with pending records retried on later successful application activity. Closed jobs, expired passes and disabled preferences suppress queued alerts.
+
+Nearby-job emails show a short job summary, location, formatted pay, work date and a direct link to the job. The email footer links to the signed-in account’s alert preferences, with the panel opened automatically after sign-in. Nearby-job opt-in is separate from invitation/message email preferences; account-security emails keep their own delivery rules. Provider retries retain the original email body and idempotency key, while eligibility is checked again before each attempt.
 
 Configure `RESEND_API_KEY` privately and a verified `EMAIL_FROM` sender. The queue is not a promise of a hire or exclusive access. Monitor failed/review queue statuses and Kora settlement in the owner dashboards.

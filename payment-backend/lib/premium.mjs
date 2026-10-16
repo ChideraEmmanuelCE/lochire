@@ -34,7 +34,7 @@ export async function premiumState(db,user,env){
 async function chargeApi(env,path,body){
   if(!koraWebhookStatus(env).webhookReady)fail(503,'Kora payments are awaiting private configuration.');
   let response;
-  try{response=await koraProviderFetch(env,path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+env.KORAPAY_SECRET_KEY,Accept:'application/json','Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'error',signal:AbortSignal.timeout(15000)});}catch{fail(503,'Kora could not be reached. Check your saved purchase before trying again.');}
+  try{response=await koraProviderFetch(env,path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+env.KORAPAY_SECRET_KEY,Accept:'application/json','Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'manual',signal:AbortSignal.timeout(15000)});}catch{fail(503,'Kora could not be reached. Check your saved purchase before trying again.');}
   const result=await response.json().catch(()=>null);
   if(!response.ok||result?.status!==true||!result.data)fail(503,response.status===401?'Kora rejected the configured key. Payments are temporarily unavailable.':'Kora could not confirm this request. Check your saved purchase before trying again.');
   return result.data;
@@ -129,7 +129,7 @@ export async function queueNearbyJobAlerts(db,openingId){
   if(opening.title.startsWith('Booking:')){await run(db,'UPDATE lh_job_alert_outbox SET processed_at=? WHERE opening_id=?',now(),openingId);return;}
   // Live passes alone queue live job alerts. Tests use the same matching and
   // delivery contract through fixtures; sandbox money never creates live mail.
-  const recipients=await all(db,`SELECT DISTINCT p.user_id,p.data,a.enabled,a.city,a.area,a.category FROM live_profiles p JOIN lh_job_alert_preferences a ON a.user_id=p.user_id JOIN live_account_settings s ON s.user_id=p.user_id WHERE p.role='worker' AND p.published=1 AND p.suspended=0 AND a.enabled=1 AND s.email_verified_at IS NOT NULL AND s.hiring_email_enabled=1 AND p.user_id!=? AND EXISTS(SELECT 1 FROM lh_premium_grants g WHERE g.user_id=p.user_id AND g.mode='live' AND g.tier='alerts' AND g.revoked_at IS NULL AND g.starts_at<=? AND g.starts_at<=? AND g.expires_at>?) AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=p.id AND b.target=?) OR (b.target=p.id AND b.actor=?))`,openingRow.hirer_user,now(),openingRow.created_at,now(),openingRow.employer_id,openingRow.employer_id);
+  const recipients=await all(db,`SELECT DISTINCT p.user_id,p.data,a.enabled,a.city,a.area,a.category FROM live_profiles p JOIN lh_job_alert_preferences a ON a.user_id=p.user_id JOIN live_account_settings s ON s.user_id=p.user_id WHERE p.role='worker' AND p.published=1 AND p.suspended=0 AND a.enabled=1 AND s.email_verified_at IS NOT NULL AND p.user_id!=? AND EXISTS(SELECT 1 FROM lh_premium_grants g WHERE g.user_id=p.user_id AND g.mode='live' AND g.tier='alerts' AND g.revoked_at IS NULL AND g.starts_at<=? AND g.starts_at<=? AND g.expires_at>?) AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=p.id AND b.target=?) OR (b.target=p.id AND b.actor=?))`,openingRow.hirer_user,now(),openingRow.created_at,now(),openingRow.employer_id,openingRow.employer_id);
   for(const r of recipients){if(!matchesJobAlert(JSON.parse(r.data),opening,r))continue;
     const notification='JOB-'+openingId+'-'+r.user_id;
     await db.batch([

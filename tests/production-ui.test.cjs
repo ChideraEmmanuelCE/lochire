@@ -198,3 +198,12 @@ test('explicit hirer onboarding after login opens the hirer form while retaining
   await tick();await register(b,'switchsignin');await createProfile(b,true);await logoutSaved(b);b.w.location.hash='#join-hirer';await tick();await click(b,'[data-action="be-employer"]');fill(b,{email:'switchsignin@example.test',password:'SecureFixturePassword123!'});await submit(b,'auth-form');assert.equal(b.w.document.querySelector('[name="occupation"]'),null);assert.ok(b.w.document.querySelector('[name="intro"]'));assert.match(b.w.document.querySelector('#role-button').textContent,/Hire/);assert.equal(f.sqlite.prepare("SELECT published FROM live_profiles WHERE role='worker'").get().published,1);assert.equal(f.errors.length,0);
  }finally{b.close();}
 });
+
+test('email preferences link signs into the receiving account, opens alerts and saves its own opt-out',async()=>{
+ const f=await fixture(),b=f.browser();try{
+  await tick();await register(b,'emailmanage');await createProfile(b,true);await logoutSaved(b);
+  b.w.history.replaceState(null,'','/?manage_job_alerts=1#premium');b.w.dispatchEvent(new b.w.HashChangeEvent('hashchange'));await tick();assert.match(b.w.document.querySelector('main').textContent,/Sign in with the account that received the email/);await click(b,'[data-action="manage-job-alerts"]');fill(b,{email:'emailmanage@example.test',password:'SecureFixturePassword123!'});await submit(b,'auth-form');
+  assert.equal(b.w.location.hash,'#premium');assert.equal(new URL(b.w.location.href).searchParams.has('manage_job_alerts'),false);assert.equal(b.w.document.querySelector('[data-disclosure="job-alerts"]').open,true);assert.equal(b.w.document.querySelector('#job-alerts-form [name="city"]').value,'Ibadan');
+  fill(b,{enabled:false,city:'Ibadan',area:'Jericho',category:'Plumbing'});await submit(b,'job-alerts-form');assert.equal(f.sqlite.prepare('SELECT enabled FROM lh_job_alert_preferences').get().enabled,0);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM live_account_settings WHERE hiring_email_enabled=0').get().n,0,'job alert opt-out does not disable invitation emails');assert.equal(f.errors.length,0);
+ }finally{b.close();}
+});

@@ -1,3 +1,4 @@
+import {nearbyJobEmail} from './job-alert-email.mjs';
 import {jobAlertContent} from './premium.mjs';
 import {emailReady} from './account-email.mjs';
 import {workerMatchFeed} from './worker-radar.mjs';
@@ -8,7 +9,7 @@ const RETRY_WINDOW=23*60*60*1000;
 async function emailContent(db,env,row) {
   let link=new URL('/#'+(row.kind==='worker_match'?'available':row.engagement_id?'record/'+encodeURIComponent(row.engagement_id):'notifications'),env.APP_ORIGIN).href;
   let title='You have a new LocHire work update',lines=['Open your inbox to view your invitation, message or work update.'],matchIds;
-  if(row.kind==='job_alert'){const match=await jobAlertContent(db,env,row);if(!match)return null;link=match.link;if(row.payload)return JSON.parse(row.payload);const o=match.opening;title='New nearby job: '+o.title;lines=['A new job matches your saved location and service preferences.',o.title+' · '+o.category,o.area+', '+o.city,o.quote?'Pay: discuss a quote':'Pay: ₦'+o.min+' – ₦'+o.max+' / '+o.basis,o.description,'Open LocHire to review the job and express interest. Premium Plus alerts do not guarantee a job or priority over other applicants.'];}
+  if(row.kind==='job_alert'){const match=await jobAlertContent(db,env,row);if(!match)return null;return row.payload?JSON.parse(row.payload):nearbyJobEmail(match.opening,match.link,env);}
   else if(row.kind==='worker_match') {
     const hirer=await db.prepare("SELECT id,data FROM live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0").bind(row.user_id).first();
     if(!hirer||JSON.parse(hirer.data).candidateAlerts===false)return null;
@@ -61,7 +62,7 @@ export async function deliverWorkEmails(db,env,{now=Date.now(),limit=3}={}) {
     const finish=(status,error=null,next=0)=>db.prepare(`UPDATE live_notification_emails
       SET status=?,last_error=?,next_at=?,lease_until=0,claim=NULL,sent_at=?
       WHERE notification_id=? AND claim=?`).bind(status,error,next,status==='sent'?new Date(now).toISOString():null,row.notification_id,claim).run();
-    if(!row.email_verified_at||row.hiring_email_enabled===0||!emailReady(env,row.email)) {
+    if(!row.email_verified_at||(row.kind!=='job_alert'&&row.hiring_email_enabled===0)||!emailReady(env,row.email)) {
       await finish('skipped','delivery_not_enabled');continue;
     }
     // Do not retry an uncertain chargeable send beyond the provider's

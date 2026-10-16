@@ -114,3 +114,43 @@ test('only verified Plus members receive matching new-job email, with duplicate 
 test('the 900 pass and sandbox Plus passes do not send new-job alerts; expiry suppresses queued content',async()=>{
  for(const [tier,mode]of [['access','live'],['alerts','test']]){const h=await fixture();await grant(h,h.w,tier,mode);await h.db.prepare('INSERT INTO live_account_settings(user_id,email_verified_at) VALUES(?,?)').bind(h.w.id,new Date().toISOString()).run();await h.db.prepare("INSERT INTO lh_job_alert_preferences(user_id,enabled,city,area,category) VALUES(?,1,'Ibadan','Jericho','Plumbing')").bind(h.w.id).run();await queueNearbyJobAlerts(h.db,h.oid);assert.equal((await h.db.prepare('SELECT COUNT(*) AS n FROM lh_job_alerts').bind().first()).n,0);}
 });
+
+test('Kora requests use workerd-compatible manual redirects and never follow a provider redirect',async()=>{
+ const {koraProviderFetch}=await import('../lib/korapay.mjs');const old=global.fetch,calls=[];
+ global.fetch=async(url,options)=>{calls.push({url,options});assert.equal(options.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://untrusted.example/'}});};
+ try{await assert.rejects(koraProviderFetch({},'/charges/LHPR-fixture',{redirect:'error',headers:{Authorization:'Bearer private-fixture'}}),/unexpected redirect/);assert.equal(calls.length,1);assert.equal(calls[0].url,'https://api.korapay.com/merchant/api/v1/charges/LHPR-fixture');}finally{global.fetch=old;}
+});
+
+async function alertFixture(){
+ const h=await fixture();await grant(h,h.w,'alerts');
+ await h.db.prepare('INSERT INTO live_account_settings(user_id,email_verified_at,hiring_email_enabled) VALUES(?,?,0)').bind(h.w.id,new Date().toISOString()).run();
+ await h.db.prepare("INSERT INTO lh_job_alert_preferences(user_id,enabled,city,area,category) VALUES(?,1,'Ibadan','Jericho','Plumbing')").bind(h.w.id).run();
+ Object.assign(h.env,{RESEND_API_KEY:'re_fixture',EMAIL_FROM:'LocHire <alerts@example.test>'});
+ return h;
+}
+
+test('Plus emails have a readable job summary, preference link and independent opt-in; retries keep the exact payload',async()=>{
+ const h=await alertFixture(),old=global.fetch,mails=[];let fail=true;
+ global.fetch=async(url,opts)=>{mails.push({body:JSON.parse(opts.body),key:opts.headers['Idempotency-Key']});return fail?Response.json({error:'temporary'},{status:503}):Response.json({id:'mail-fixture'});};
+ try{
+  await queueNearbyJobAlerts(h.db,h.oid);await deliverWorkEmails(h.db,h.env);assert.equal(mails.length,1,'Plus opt-in is independent of invitation opt-out');
+  const mail=mails[0].body;assert.deepEqual(mail.to,['artisan@example.test']);assert.match(mail.subject,/New nearby job: Repair kitchen pipe/);assert.match(mail.text,/₦15,000 – ₦25,000 per task/);assert.match(mail.text,/Location: Jericho, Ibadan/);assert.match(mail.text,/Job date: /);assert.match(mail.text,/manage_job_alerts=1#premium/);assert.match(mail.html,/role="presentation"/);assert.match(mail.html,/max-width:560px/);assert.match(mail.html,/View job &amp; express interest/);assert.match(mail.html,/Manage or turn off nearby job emails/);assert.doesNotMatch(JSON.stringify(mail),/OY-PRIVATE|08012345678|sk_test|re_fixture/);
+  const row=await h.db.prepare('SELECT * FROM live_notification_emails WHERE notification_id LIKE ?').bind('JOB-%').first();assert.equal(row.status,'pending');
+  const opening=await h.db.prepare('SELECT data FROM live_openings WHERE id=?').bind(h.oid).first();await h.db.prepare('UPDATE live_openings SET data=? WHERE id=?').bind(JSON.stringify({...JSON.parse(opening.data),title:'Changed after first attempt'}),h.oid).run();
+  fail=false;await deliverWorkEmails(h.db,h.env,{now:row.next_at});assert.equal(mails.length,2);assert.deepEqual(mails[1],mails[0],'retry body and provider idempotency key remain unchanged');
+ }finally{global.fetch=old;}
+});
+
+test('queued job emails are suppressed after opt-out, expiry, a closed job or a new block',async()=>{
+ for(const reason of ['optout','expired','closed','blocked']){
+  const h=await alertFixture(),old=global.fetch;let sent=0;global.fetch=async()=>{sent++;return Response.json({id:'unexpected'});};
+  try{
+   await queueNearbyJobAlerts(h.db,h.oid);const row=await h.db.prepare('SELECT notification_id FROM lh_job_alerts').bind().first();assert.ok(row);
+   if(reason==='optout')await h.db.prepare('UPDATE lh_job_alert_preferences SET enabled=0 WHERE user_id=?').bind(h.w.id).run();
+   if(reason==='expired')await h.db.prepare("UPDATE lh_premium_grants SET expires_at='2020-01-01T00:00:00.000Z'").bind().run();
+   if(reason==='closed')await h.db.prepare("UPDATE live_openings SET status='Closed' WHERE id=?").bind(h.oid).run();
+   if(reason==='blocked')await h.db.prepare('INSERT INTO live_blocks(actor,target) VALUES(?,?)').bind(h.w.profile,h.e.profile).run();
+   await deliverWorkEmails(h.db,h.env);assert.equal(sent,0,reason);assert.equal((await h.db.prepare('SELECT status FROM live_notification_emails WHERE notification_id=?').bind(row.notification_id).first()).status,'skipped',reason);
+  }finally{global.fetch=old;}
+ }
+});
