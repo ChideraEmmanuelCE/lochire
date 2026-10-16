@@ -85,7 +85,7 @@ export async function premiumAction({db,user,env,request,body,path}){
   if(path==='payments/premium/alerts'){
     if(typeof body.enabled!=='boolean')fail(400,'Choose whether to receive nearby job alerts.');
     const clean=(value,max)=>{if(typeof value!=='string'||value.trim().length>max)fail(400,'Enter valid job alert preferences.');return value.trim();};
-    const worker=await first(db,"SELECT data FROM live_profiles WHERE user_id=? AND role='worker' AND suspended=0",user.id);if(!worker)fail(409,'Create a worker profile before choosing job alerts.');
+    const worker=await first(db,"SELECT data FROM available_live_profiles WHERE user_id=? AND role='worker' AND suspended=0",user.id);if(!worker)fail(409,'Create a worker profile before choosing job alerts.');
     const p=JSON.parse(worker.data),city=clean(body.city??p.city,70),area=clean(body.area??p.area,90),category=clean(body.category??p.occupation,100);
     if(!city)fail(400,'Add a city for nearby job alerts.');
     if(category&&category!==p.occupation&&!['Domestic help','Cooking','Driving','Cleaning','Plumbing','Electrical work','Painting','Carpentry','Appliance repairs','Gate attendant','Shop assistant'].includes(category))fail(400,'Choose a valid service for alerts.');
@@ -103,7 +103,7 @@ export async function premiumAction({db,user,env,request,body,path}){
   if(body.consent!==true)fail(400,'Approve this one-time premium purchase first.');
   if(plan.alerts&&body.alertsConsent!==true)fail(400,'Approve nearby job emails, or choose the ₦900 Premium pass.');
   if(typeof body.requestId!=='string'||!/^[-a-zA-Z0-9]{16,70}$/.test(body.requestId))fail(400,'Refresh this form before continuing.');
-  const worker=await first(db,"SELECT data FROM live_profiles WHERE user_id=? AND role='worker' AND published=1 AND suspended=0",user.id);if(!worker)fail(409,'Publish your worker profile before buying premium access.');
+  const worker=await first(db,"SELECT data FROM available_live_profiles WHERE user_id=? AND role='worker' AND published=1 AND suspended=0",user.id);if(!worker)fail(409,'Publish your worker profile before buying premium access.');
   const mode=premiumMode(user,env),old=await first(db,'SELECT * FROM lh_kora_premium_orders WHERE user_id=? AND mode=? AND claim=?',user.id,mode,body.requestId);
   if(old){if(old.tier!==plan.id||old.amount!==plan.amount)fail(409,'This request belongs to another plan.');return {order:pubOrder(old),checkoutUrl:old.status==='pending'&&old.checkout_url?checkoutUrl(old.checkout_url):null,message:'Your purchase is saved. Check its status before paying again.'};}
   const reference='LHPR-'+crypto.randomUUID().replaceAll('-','');
@@ -123,13 +123,13 @@ export function matchesJobAlert(worker,opening,preferences){
   return !!city&&norm(city)===norm(opening.city)&&(!category||norm(category)===norm(opening.category))&&(!area||[opening.area].some(a=>norm(a)===norm(area)));
 }
 export async function queueNearbyJobAlerts(db,openingId){
-  const openingRow=await first(db,"SELECT o.*,p.user_id AS hirer_user,p.published,p.suspended FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.id=?",openingId);
+  const openingRow=await first(db,"SELECT o.*,p.user_id AS hirer_user,p.published,p.suspended FROM live_openings o JOIN available_live_profiles p ON p.id=o.employer_id WHERE o.id=?",openingId);
   if(!openingRow||openingRow.status!=='Open'||!openingRow.published||openingRow.suspended){await run(db,'UPDATE lh_job_alert_outbox SET processed_at=? WHERE opening_id=?',now(),openingId);return;}
   const opening={...JSON.parse(openingRow.data),id:openingRow.id,status:openingRow.status};
   if(opening.title.startsWith('Booking:')){await run(db,'UPDATE lh_job_alert_outbox SET processed_at=? WHERE opening_id=?',now(),openingId);return;}
   // Live passes alone queue live job alerts. Tests use the same matching and
   // delivery contract through fixtures; sandbox money never creates live mail.
-  const recipients=await all(db,`SELECT DISTINCT p.user_id,p.data,a.enabled,a.city,a.area,a.category FROM live_profiles p JOIN lh_job_alert_preferences a ON a.user_id=p.user_id JOIN live_account_settings s ON s.user_id=p.user_id WHERE p.role='worker' AND p.published=1 AND p.suspended=0 AND a.enabled=1 AND s.email_verified_at IS NOT NULL AND p.user_id!=? AND EXISTS(SELECT 1 FROM lh_premium_grants g WHERE g.user_id=p.user_id AND g.mode='live' AND g.tier='alerts' AND g.revoked_at IS NULL AND g.starts_at<=? AND g.starts_at<=? AND g.expires_at>?) AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=p.id AND b.target=?) OR (b.target=p.id AND b.actor=?))`,openingRow.hirer_user,now(),openingRow.created_at,now(),openingRow.employer_id,openingRow.employer_id);
+  const recipients=await all(db,`SELECT DISTINCT p.user_id,p.data,a.enabled,a.city,a.area,a.category FROM available_live_profiles p JOIN lh_job_alert_preferences a ON a.user_id=p.user_id JOIN live_account_settings s ON s.user_id=p.user_id WHERE p.role='worker' AND p.published=1 AND p.suspended=0 AND a.enabled=1 AND s.email_verified_at IS NOT NULL AND p.user_id!=? AND EXISTS(SELECT 1 FROM lh_premium_grants g WHERE g.user_id=p.user_id AND g.mode='live' AND g.tier='alerts' AND g.revoked_at IS NULL AND g.starts_at<=? AND g.starts_at<=? AND g.expires_at>?) AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=p.id AND b.target=?) OR (b.target=p.id AND b.actor=?))`,openingRow.hirer_user,now(),openingRow.created_at,now(),openingRow.employer_id,openingRow.employer_id);
   for(const r of recipients){if(!matchesJobAlert(JSON.parse(r.data),opening,r))continue;
     const notification='JOB-'+openingId+'-'+r.user_id;
     await db.batch([
@@ -142,7 +142,7 @@ export async function queueNearbyJobAlerts(db,openingId){
 }
 export async function drainJobAlertOutbox(db){const jobs=await all(db,'SELECT opening_id FROM lh_job_alert_outbox WHERE processed_at IS NULL LIMIT 5');for(const j of jobs)await queueNearbyJobAlerts(db,j.opening_id);return jobs.length;}
 export async function jobAlertContent(db,env,row){
-  const r=await first(db,`SELECT o.*,p.published,p.suspended,w.data AS worker_data,a.enabled,a.city,a.area,a.category FROM lh_job_alerts j JOIN live_openings o ON o.id=j.opening_id JOIN live_profiles p ON p.id=o.employer_id JOIN live_profiles w ON w.user_id=j.user_id AND w.role='worker' JOIN lh_job_alert_preferences a ON a.user_id=j.user_id WHERE j.notification_id=? AND w.published=1 AND w.suspended=0 AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=w.id AND b.target=p.id) OR (b.actor=p.id AND b.target=w.id))`,row.notification_id);
+  const r=await first(db,`SELECT o.*,p.published,p.suspended,w.data AS worker_data,a.enabled,a.city,a.area,a.category FROM lh_job_alerts j JOIN live_openings o ON o.id=j.opening_id JOIN available_live_profiles p ON p.id=o.employer_id JOIN available_live_profiles w ON w.user_id=j.user_id AND w.role='worker' JOIN lh_job_alert_preferences a ON a.user_id=j.user_id WHERE j.notification_id=? AND w.published=1 AND w.suspended=0 AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=w.id AND b.target=p.id) OR (b.actor=p.id AND b.target=w.id))`,row.notification_id);
   if(!r||!r.published||r.suspended)return null;
   const access=await premiumAccess(db,{id:row.user_id,email:row.email},{KORAPAY_MODE:'live'}),o={...JSON.parse(r.data),status:r.status};
   if(!access.alerts||!matchesJobAlert(JSON.parse(r.worker_data),o,r))return null;

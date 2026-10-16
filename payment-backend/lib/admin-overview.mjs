@@ -24,10 +24,10 @@ export async function adminOverview(db,request){
   if(q){clauses.push("(instr(lower(u.name),lower(?))>0 OR instr(lower(u.email),lower(?))>0)");values.push(q,q);}
   if(verified)clauses.push('s.email_verified_at IS '+(verified==='yes'?'NOT ':'')+'NULL');
   const where=clauses.length?' WHERE '+clauses.join(' AND '):'';
-  const join=' FROM users u LEFT JOIN live_account_settings s ON s.user_id=u.id';
+  const join=' FROM users u LEFT JOIN live_account_settings s ON s.user_id=u.id LEFT JOIN account_locks l ON l.user_id=u.id';
   const total=(await first(db,'SELECT COUNT(*) AS total'+join+where,...values)).total;
   const pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages);
-  const users=await all(db,'SELECT u.id,u.name,u.email,u.role,u.created_at,s.email_verified_at, (SELECT COUNT(*) FROM live_profiles p WHERE p.user_id=u.id) AS profile_count'+join+where+' ORDER BY u.created_at DESC,u.id LIMIT ? OFFSET ?',...values,pageSize,(current-1)*pageSize);
+  const users=await all(db,'SELECT u.id,u.name,u.email,u.role,u.created_at,s.email_verified_at,l.kind AS lock_kind,l.reason AS lock_reason,l.until_at AS lock_until,l.updated_at AS lock_updated_at, (SELECT COUNT(*) FROM live_profiles p WHERE p.user_id=u.id) AS profile_count'+join+where+' ORDER BY u.created_at DESC,u.id LIMIT ? OFFSET ?',...values,pageSize,(current-1)*pageSize);
   const byDay=new Map(signups.map(d=>[d.day,d.count]));
   const delivery=(await all(db,'SELECT status,COUNT(*) AS n FROM live_notification_emails GROUP BY status')).reduce((a,r)=>({...a,[r.status]:r.n}),{});
   return {emailAlerts:delivery,generatedAt,timeZone:'Africa/Lagos',counts:{...counts,unverified:counts.accounts-counts.verified,...profileCounts,...workCounts,pendingReports:reportCounts.pending,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n},signups:Array.from({length:30},(_,i)=>{const day=dayBack(29-i);return {day,count:byDay.get(day)||0};}),users,pagination:{page:current,pageSize,total,pages},filters:{q,verified}};

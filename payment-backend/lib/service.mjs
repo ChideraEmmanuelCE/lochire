@@ -1,3 +1,4 @@
+import {activeAccountLock,lockMessage} from './account-locks.mjs';
 import {adultRegistrationError} from './eligibility.mjs';
 import {premiumAction,premiumWebhook,premiumState,premiumReadiness,drainJobAlertOutbox} from './premium.mjs';
 import {billingAction} from './commerce.mjs';
@@ -40,6 +41,7 @@ async function session(db, request) {
   if (!token || !/^[a-f0-9]{64}$/.test(token)) fail(401,'Sign in to your LocHire account first.');
   const user=await first(db,'SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>?',await digest(token),Date.now());
   if(!user)fail(401,'Your session has expired. Please sign in again.');
+  const lock=await activeAccountLock(db,user.id);if(lock)fail(403,lockMessage(lock));
   return user;
 }
 async function newSession(db,userId) {
@@ -385,6 +387,7 @@ async function routeRequest(request,env) {
         const hash=await passwordHash(password,user?.password_salt||'invalid-account-salt');
         if(!user||!equal(hash,user.password_hash))fail(401,'Email or password is incorrect.');
       }
+      const lock=await activeAccountLock(db,user.id);if(lock)fail(403,lockMessage(lock));
       const token=await newSession(db,user.id);
       const verificationEmail=path==='auth/register'&&live(env)?await requestAccountEmail(db,env,user,'verify'):null;
       const result=live(env)?await hiringState(db,user,env,request):await summary(db,user,env);

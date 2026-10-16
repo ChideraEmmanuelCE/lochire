@@ -1,3 +1,4 @@
+import {activeAccountLock} from './account-locks.mjs';
 import {nearbyJobEmail} from './job-alert-email.mjs';
 import {jobAlertContent} from './premium.mjs';
 import {emailReady} from './account-email.mjs';
@@ -11,14 +12,14 @@ async function emailContent(db,env,row) {
   let title='You have a new LocHire work update',lines=['Open your inbox to view your invitation, message or work update.'],matchIds;
   if(row.kind==='job_alert'){const match=await jobAlertContent(db,env,row);if(!match)return null;return row.payload?JSON.parse(row.payload):nearbyJobEmail(match.opening,match.link,env);}
   else if(row.kind==='worker_match') {
-    const hirer=await db.prepare("SELECT id,data FROM live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0").bind(row.user_id).first();
+    const hirer=await db.prepare("SELECT id,data FROM available_live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0").bind(row.user_id).first();
     if(!hirer||JSON.parse(hirer.data).candidateAlerts===false)return null;
     const matches=await workerMatchFeed(db,hirer.id);if(!matches.length)return null;
     if(row.payload){const saved=JSON.parse(row.payload);if(saved.matchIds?.some(id=>!matches.some(m=>m.id===id)))return null;return saved;}
     title='Local workers are ready for your openings';lines=['These published profiles match your occupation, skills and area preferences. Review each profile before deciding.'];matchIds=[];
     const seen=new Set();
     for(const m of matches){if(seen.has(m.workerId))continue;seen.add(m.workerId);matchIds.push(m.id);
-      const r=await db.prepare('SELECT data FROM live_profiles WHERE id=?').bind(m.workerId).first(),p=JSON.parse(r.data);
+      const r=await db.prepare('SELECT data FROM available_live_profiles WHERE id=?').bind(m.workerId).first(),p=JSON.parse(r.data);
       const o=await db.prepare('SELECT data FROM live_openings WHERE id=?').bind(m.openingId).first();
       lines.push(p.name+' · '+p.occupation+' · '+p.area+', '+p.city,p.years+' years experience · Skills: '+p.skills.slice(0,8).join(', '),'Available from '+p.start+' · '+(p.flexible?'Discuss a quote':'Expected pay: ₦'+p.pay+' / '+p.basis),'Matches: '+JSON.parse(o.data).title);
       if(matchIds.length>=5)break;
@@ -30,7 +31,7 @@ async function emailContent(db,env,row) {
     const g=JSON.parse(r.data),t=g.interview;if(!t)return null;
     if(row.payload)return JSON.parse(row.payload);
     title='You have been accepted for an interview';
-    const p=await db.prepare('SELECT data FROM live_profiles WHERE id=?').bind(g.employerId).first();
+    const p=await db.prepare('SELECT data FROM available_live_profiles WHERE id=?').bind(g.employerId).first();
     lines=['A hirer has invited you to interview for '+g.title+'.','Hirer: '+JSON.parse(p.data).name,'When: '+t.date+' at '+t.time+' WAT','Location: '+t.location,'Contact: '+t.contactName+' · '+t.phone,...(t.contactEmail?['Email: '+t.contactEmail]:[]),...(t.notes?['Notes: '+t.notes]:[]),'Your interview details are saved in My work. Open the invitation to confirm attendance or decline.'];
   }else if(row.payload)return JSON.parse(row.payload);
   const footer='Manage work email alerts in LocHire Settings. Account security emails remain enabled.';
@@ -62,6 +63,7 @@ export async function deliverWorkEmails(db,env,{now=Date.now(),limit=3}={}) {
     const finish=(status,error=null,next=0)=>db.prepare(`UPDATE live_notification_emails
       SET status=?,last_error=?,next_at=?,lease_until=0,claim=NULL,sent_at=?
       WHERE notification_id=? AND claim=?`).bind(status,error,next,status==='sent'?new Date(now).toISOString():null,row.notification_id,claim).run();
+    if(await activeAccountLock(db,row.user_id)){await finish('skipped','account_locked');continue;}
     if(!row.email_verified_at||(row.kind!=='job_alert'&&row.hiring_email_enabled===0)||!emailReady(env,row.email)) {
       await finish('skipped','delivery_not_enabled');continue;
     }

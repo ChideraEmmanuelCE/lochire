@@ -17,8 +17,8 @@ export function matchWorker(worker,opening) {
 }
 const decode=r=>({...JSON.parse(r.data),id:r.id,published:r.published===1,suspended:r.suspended===1});
 export async function syncWorkerMatches(db,{workerId,openingId,employerId}={}) {
-  const workers=(await rows(db,"SELECT * FROM live_profiles WHERE role='worker' AND published=1 AND suspended=0"+(workerId?' AND id=?':'')+' ORDER BY updated_at DESC LIMIT 1000',...(workerId?[workerId]:[]))).map(decode);
-  const openings=await rows(db,"SELECT o.*,p.user_id,p.data AS employer_data FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0"+(openingId?' AND o.id=?':'')+(employerId?' AND o.employer_id=?':'')+' ORDER BY o.created_at DESC LIMIT 100',...(openingId?[openingId]:[]),...(employerId?[employerId]:[]));
+  const workers=(await rows(db,"SELECT * FROM available_live_profiles WHERE role='worker' AND published=1 AND suspended=0"+(workerId?' AND id=?':'')+' ORDER BY updated_at DESC LIMIT 1000',...(workerId?[workerId]:[]))).map(decode);
+  const openings=await rows(db,"SELECT o.*,p.user_id,p.data AS employer_data FROM live_openings o JOIN available_live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0"+(openingId?' AND o.id=?':'')+(employerId?' AND o.employer_id=?':'')+' ORDER BY o.created_at DESC LIMIT 100',...(openingId?[openingId]:[]),...(employerId?[employerId]:[]));
   const existing=new Set((await rows(db,'SELECT opening_id,worker_id FROM live_worker_matches')).map(r=>r.opening_id+'|'+r.worker_id));
   const conversations=new Set((await rows(db,'SELECT opening_id,worker_id FROM live_engagements')).map(r=>r.opening_id+'|'+r.worker_id));
   const blocks=new Set((await rows(db,'SELECT actor,target FROM live_blocks')).flatMap(r=>[r.actor+'|'+r.target,r.target+'|'+r.actor]));
@@ -39,7 +39,7 @@ export async function syncWorkerMatches(db,{workerId,openingId,employerId}={}) {
 export async function workerMatchFeed(db,employerId) {
   if(!employerId)return [];
   const data=await rows(db,`SELECT m.*,w.data AS worker_data,w.published,w.suspended,o.data AS opening_data,o.status AS opening_status
-    FROM live_worker_matches m JOIN live_profiles w ON w.id=m.worker_id JOIN live_openings o ON o.id=m.opening_id
+    FROM live_worker_matches m JOIN available_live_profiles w ON w.id=m.worker_id JOIN live_openings o ON o.id=m.opening_id
     WHERE m.employer_id=? AND m.status='pending' AND w.published=1 AND w.suspended=0 AND o.status='Open'
     AND NOT EXISTS(SELECT 1 FROM live_blocks b WHERE (b.actor=m.employer_id AND b.target=m.worker_id) OR (b.actor=m.worker_id AND b.target=m.employer_id))
     AND NOT EXISTS(SELECT 1 FROM live_engagements g WHERE g.opening_id=m.opening_id AND g.worker_id=m.worker_id)
@@ -47,5 +47,5 @@ export async function workerMatchFeed(db,employerId) {
   return data.flatMap(r=>{const fit=matchWorker({...JSON.parse(r.worker_data),published:true,suspended:false},{...JSON.parse(r.opening_data),status:r.opening_status});return fit?[{id:r.id,workerId:r.worker_id,openingId:r.opening_id,createdAt:r.created_at,...fit}]:[];});
 }
 export async function recordPresence(db,userId) {
-  await db.prepare("INSERT INTO live_presence(user_id,last_seen_at) SELECT ?,? WHERE EXISTS(SELECT 1 FROM live_profiles WHERE user_id=? AND role='worker' AND published=1 AND suspended=0) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(userId,Date.now(),userId).run();
+  await db.prepare("INSERT INTO live_presence(user_id,last_seen_at) SELECT ?,? WHERE EXISTS(SELECT 1 FROM available_live_profiles WHERE user_id=? AND role='worker' AND published=1 AND suspended=0) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(userId,Date.now(),userId).run();
 }

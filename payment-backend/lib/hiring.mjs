@@ -33,11 +33,11 @@ export const live=env=>env.APP_MODE==='production';
 async function admin(db,user,env){if(!user)return false;if(String(env.ADMIN_USER_IDS||'').split(',').includes(user.id))return true;if(!String(env.ADMIN_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).includes(user.email))return false;return !!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at;}
 const profileId=(user,role)=>role+'-'+user.id;
 const decoded=row=>row?{...JSON.parse(row.data),id:row.id,revision:row.revision,...(row.role?{published:row.published===1,suspended:row.suspended===1}:{})}:null;
-async function ownProfile(db,user,role){if(!user)fail(401,'Sign in to LocHire first.');const row=await first(db,'SELECT * FROM live_profiles WHERE user_id=? AND role=?',user.id,role);if(row?.suspended)fail(403,'Your profile is suspended pending review.');if(!row)fail(409,'Create your '+role+' profile first.');return row;}
+async function ownProfile(db,user,role){if(!user)fail(401,'Sign in to LocHire first.');const row=await first(db,'SELECT * FROM available_live_profiles WHERE user_id=? AND role=?',user.id,role);if(row?.suspended)fail(403,'Your profile is suspended pending review.');if(!row)fail(409,'Create your '+role+' profile first.');return row;}
 const publicProfile=p=>{const {email,phone,coordinates,contactEmailShared,postcode,...safe}=p;return safe;};
 async function isBlocked(db,a,b){return !!await first(db,'SELECT actor FROM live_blocks WHERE (actor=? AND target=?) OR (actor=? AND target=?)',a,b,b,a);}
 const notices=(db,userId,kind,title,gid,at=now(),key=id('NOT'))=>db.prepare('INSERT OR IGNORE INTO live_notifications (id,user_id,kind,title,engagement_id,created_at) VALUES (?,?,?,?,?,?)').bind(key,userId,kind,title,gid,at);
-async function notify(db,profile,kind,title,gid){const row=await first(db,'SELECT user_id FROM live_profiles WHERE id=?',profile);if(row)await notices(db,row.user_id,kind,title,gid).run();}
+async function notify(db,profile,kind,title,gid){const row=await first(db,'SELECT user_id FROM available_live_profiles WHERE id=?',profile);if(row)await notices(db,row.user_id,kind,title,gid).run();}
 
 function profileData(body,user,role){
   const p={id:profileId(user,role),name:text(body.name,'name',70),city:text(body.city,'city',70),area:text(body.area,'general area',90),email:user.email,phone:user.phone,demo:false};
@@ -63,9 +63,9 @@ function distance(a,b){const rad=v=>v*Math.PI/180,h=Math.sin(rad(b.lat-a.lat)/2)
 export async function hiringState(db,user,env,request){
   const u=new URL(request.url),lat=Number(u.searchParams.get('lat')),lon=Number(u.searchParams.get('lon'));
   const searchPoint=u.searchParams.has('lat')&&u.searchParams.has('lon')&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180?{lat,lon}:null;
-  const rows=await all(db,'SELECT * FROM live_profiles WHERE published=1 AND suspended=0 ORDER BY updated_at DESC');
-  const ownRows=user?await all(db,'SELECT * FROM live_profiles WHERE user_id=?',user.id):[];
-  const blocks=user?await all(db,'SELECT actor,target FROM live_blocks WHERE actor IN (SELECT id FROM live_profiles WHERE user_id=?) OR target IN (SELECT id FROM live_profiles WHERE user_id=?)',user.id,user.id):[];
+  const rows=await all(db,'SELECT * FROM available_live_profiles WHERE published=1 AND suspended=0 ORDER BY updated_at DESC');
+  const ownRows=user?await all(db,'SELECT * FROM available_live_profiles WHERE user_id=?',user.id):[];
+  const blocks=user?await all(db,'SELECT actor,target FROM live_blocks WHERE actor IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR target IN (SELECT id FROM available_live_profiles WHERE user_id=?)',user.id,user.id):[];
   const blockedProfiles=new Set(blocks.flatMap(b=>[b.actor,b.target]).filter(pid=>!ownRows.some(p=>p.id===pid)));
   const canHire=ownRows.some(r=>r.role==='employer'&&r.published&&!r.suspended);
   const presence=canHire?new Map((await all(db,'SELECT user_id,last_seen_at FROM live_presence WHERE last_seen_at>?',Date.now()-7*86400000)).map(r=>[r.user_id,r.last_seen_at])):null;
@@ -76,30 +76,30 @@ export async function hiringState(db,user,env,request){
     return safe;
   });
   const access=await premiumAccess(db,user,env);
-  const participantOpenings=new Set(user?(await all(db,'SELECT opening_id FROM live_engagements WHERE worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?)',user.id,user.id)).map(r=>r.opening_id):[]);
-  const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>{
+  const participantOpenings=new Set(user?(await all(db,'SELECT opening_id FROM live_engagements WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?)',user.id,user.id)).map(r=>r.opening_id):[]);
+  const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN available_live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>{
     const o=publicOpening({...decoded(r),status:r.status});
     if(env.PAYMENTS_PRODUCT==='legacy'||r.owner_user===user?.id||access.active||participantOpenings.has(r.id))return {...o,locked:false};
     return {id:o.id,title:o.title,type:o.type,category:o.category,city:o.city,area:o.area,min:o.min,max:o.max,quote:o.quote,basis:o.basis,status:o.status,locked:true};
   });
-  let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
+  let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
   engagements=engagements.map(g=>({...g,reviewEligibility:reviewEligibility(g)}));
   // Profiles belonging to an active conversation remain visible to its participants.
   const participantIds=[...new Set(engagements.flatMap(g=>[g.workerId,g.employerId]))];
-  for(const pid of participantIds)if(!published.some(p=>p.id===pid)){const r=await first(db,'SELECT * FROM live_profiles WHERE id=?',pid);if(r)published.push(publicProfile(decoded(r)));}
+  for(const pid of participantIds)if(!published.some(p=>p.id===pid)){const r=await first(db,'SELECT * FROM available_live_profiles WHERE id=?',pid);if(r)published.push(publicProfile(decoded(r)));}
   const reviews=await all(db,'SELECT id,engagement_id AS engagementId,author,target,rating,text,created_at AS at FROM live_reviews ORDER BY created_at DESC LIMIT 1000');
   const walletRole=user?await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id):null;
   const settings=user?await first(db,'SELECT email_verified_at,hiring_email_enabled FROM live_account_settings WHERE user_id=?',user.id):null;
-  const payments=user?await all(db,'SELECT p.* FROM live_payments p JOIN live_profiles a ON a.id=p.payer JOIN live_profiles b ON b.id=p.recipient WHERE a.user_id=? OR b.user_id=? ORDER BY created_at DESC LIMIT 250',user.id,user.id):[];
+  const payments=user?await all(db,'SELECT p.* FROM live_payments p JOIN available_live_profiles a ON a.id=p.payer JOIN available_live_profiles b ON b.id=p.recipient WHERE a.user_id=? OR b.user_id=? ORDER BY created_at DESC LIMIT 250',user.id,user.id):[];
   const hirer=ownRows.find(r=>r.role==='employer'&&r.published&&!r.suspended);
   const workerMatches=hirer?await workerMatchFeed(db,hirer.id):[];
   return {workerMatches,...(env.PAYMENTS_PRODUCT==='legacy'?{koraSandboxAvailable:koraSandboxAvailable(user,env),...await onlineState(db,user,env),...await billingState(db,user,env)}:await premiumState(db,user,env)),version:5,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,activeRole:walletRole?.active_role,emailVerified:!!settings?.email_verified_at,emailAlertsEnabled:settings?.hiring_email_enabled!==0}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
 }
-async function engagementFor(db,user,gid){const row=await first(db,'SELECT g.* FROM live_engagements g WHERE id=? AND (worker_id IN (SELECT id FROM live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM live_profiles WHERE user_id=?))',gid,user.id,user.id);if(!row)fail(404,'This engagement is not available to your account.');return row;}
+async function engagementFor(db,user,gid){const row=await first(db,'SELECT g.* FROM live_engagements g WHERE id=? AND (worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?))',gid,user.id,user.id);if(!row)fail(404,'This engagement is not available to your account.');return row;}
 async function mutate(db,row,g,target,kind,title,extra=[]){
   const raw=JSON.stringify(g),revision=row.revision+1,at=now();
-  const recipient=await first(db,'SELECT user_id FROM live_profiles WHERE id=?',target);
+  const recipient=await first(db,'SELECT user_id FROM available_live_profiles WHERE id=?',target);
   const batch=[db.prepare('UPDATE live_engagements SET data=?,status=?,revision=revision+1 WHERE id=? AND revision=?').bind(raw,g.status,row.id,row.revision),...extra];
   if(recipient)batch.push(db.prepare('INSERT OR IGNORE INTO live_notifications (id,user_id,kind,title,engagement_id,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM live_engagements WHERE id=? AND revision=? AND data=?)').bind('NOT-'+row.id+'-'+revision,recipient.user_id,kind,title,row.id,at,row.id,revision,raw));
   const result=await db.batch(batch);if(result[0].meta?.changes===0)fail(409,'The conversation changed. Refresh and try again.');
@@ -111,7 +111,7 @@ export async function hiringAction({db,user,env,request,body,path}){
   if(kind==='presence'){await recordPresence(db,user.id);return {ok:true};}
   if(kind==='matches'){return respondToMatch({db,user,env,request,body,parts});}
   if(kind==='profiles'){
-    const role=choose(parts[2],['worker','employer'],'profile type'),p=profileData(body,user,role),existing=await first(db,'SELECT revision,suspended FROM live_profiles WHERE id=?',p.id);
+    const role=choose(parts[2],['worker','employer'],'profile type'),p=profileData(body,user,role),existing=await first(db,'SELECT revision,suspended FROM available_live_profiles WHERE id=?',p.id);
     if(existing){if(existing.suspended)fail(403,'Your profile is suspended pending review.');if(body.revision!==existing.revision)fail(409,'Your profile changed. Refresh before saving.');const r=await run(db,'UPDATE live_profiles SET data=?,published=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?',JSON.stringify(p),p.published===false?0:1,now(),p.id,existing.revision);if(r.meta?.changes===0)fail(409,'Your profile changed. Refresh before saving.');}
     else await run(db,'INSERT INTO live_profiles (id,user_id,role,published,data,revision,updated_at) VALUES (?,?,?,?,?,1,?)',p.id,user.id,role,p.published===false?0:1,JSON.stringify(p),now());
     await syncWorkerMatches(db,role==='worker'?{workerId:p.id}:{employerId:p.id});
@@ -131,7 +131,7 @@ export async function hiringAction({db,user,env,request,body,path}){
     let openingRow;
     if(body.booking){
       if(role!=='employer')fail(403,'Switch to Hiring to request a booking.');
-      const target=await first(db,"SELECT * FROM live_profiles WHERE id=? AND role='worker' AND published=1 AND suspended=0",body.workerId);if(!target||target.user_id===user.id)fail(404,'Choose another available worker.');
+      const target=await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='worker' AND published=1 AND suspended=0",body.workerId);if(!target||target.user_id===user.id)fail(404,'Choose another available worker.');
       const wp=decoded(target);if(wp.acceptingBookings===false||await isBlocked(db,mine.id,target.id))fail(403,'This worker is unavailable for contact.');
       if(!wp.types.includes('One-off task'))fail(400,'Invite this worker to an ongoing opening.');
       const oid=body.requestId?'OPN-'+text(body.requestId,'request reference',100):id('OPN'),o=openingData({...body.booking,type:'One-off task',category:wp.occupation,title:'Booking: '+wp.occupation,quote:true,min:0,max:0,basis:'Per task',skills:[],days:[]},mine);o.id=oid;
@@ -140,15 +140,15 @@ export async function hiringAction({db,user,env,request,body,path}){
       await run(db,"INSERT OR IGNORE INTO live_openings (id,employer_id,status,data,revision,created_at) VALUES (?,?,'Open',?,1,?)",oid,mine.id,openingRow.data,now());const saved=await first(db,'SELECT employer_id,data FROM live_openings WHERE id=?',oid);if(saved.employer_id!==mine.id||saved.data!==openingRow.data)fail(409,'Request reference already used.');
     }else openingRow=await first(db,'SELECT * FROM live_openings WHERE id=?',text(body.openingId,'opening ID',100));
     if(!openingRow||openingRow.status!=='Open')fail(409,'This opening is unavailable.');
-    const w=role==='worker'?mine:await first(db,"SELECT * FROM live_profiles WHERE id=? AND role='worker' AND published=1 AND suspended=0",body.workerId);
-    const e=await first(db,"SELECT * FROM live_profiles WHERE id=? AND role='employer' AND published=1 AND suspended=0",openingRow.employer_id);
+    const w=role==='worker'?mine:await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='worker' AND published=1 AND suspended=0",body.workerId);
+    const e=await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='employer' AND published=1 AND suspended=0",openingRow.employer_id);
     if(!w||!e||w.user_id===e.user_id||role==='employer'&&mine.id!==e.id)fail(403,'Choose an available worker and your own opening.');
     if(decoded(w).acceptingBookings===false||await isBlocked(db,w.id,e.id))fail(403,'Contact is unavailable.');
     const exists=await first(db,'SELECT id FROM live_engagements WHERE opening_id=? AND worker_id=?',openingRow.id,w.id);
     if(!exists){const gid='ENG-'+openingRow.id+'-'+w.id,at=now(),o=decoded(openingRow),g={id:gid,openingId:o.id,workerId:w.id,employerId:e.id,type:o.type,title:o.title,kind:role==='worker'?'Expression of interest':'Invitation',status:'Pending',initiator:mine.id,created:at,messages:[{id:id('MSG'),actor:mine.id,text:text(body.message,'message'),at}],terms:null,version:0,confirmations:{},completion:{},history:[{text:'Conversation started',at}],postcode:o.postcode||null};
       await db.batch([db.prepare("INSERT OR IGNORE INTO live_engagements (id,opening_id,worker_id,employer_id,status,data,revision,created_at) VALUES (?,?,?,?,'Pending',?,1,?)").bind(gid,o.id,w.id,e.id,JSON.stringify(g),at),notices(db,role==='worker'?e.user_id:w.user_id,'invitation','New invitation: '+o.title,gid,at,'NOT-'+gid+'-created')]);}
   }else if(kind==='engagements'&&parts[2]){
-    const row=await engagementFor(db,user,parts[2]),g=decoded(row),myProfiles=await all(db,'SELECT id FROM live_profiles WHERE user_id=?',user.id),actor=myProfiles.find(p=>p.id===g.workerId||p.id===g.employerId)?.id,target=actor===g.workerId?g.employerId:g.workerId,action=parts[3];
+    const row=await engagementFor(db,user,parts[2]),g=decoded(row),myProfiles=await all(db,'SELECT id FROM available_live_profiles WHERE user_id=?',user.id),actor=myProfiles.find(p=>p.id===g.workerId||p.id===g.employerId)?.id,target=actor===g.workerId?g.employerId:g.workerId,action=parts[3];
     if(body.revision!==row.revision)fail(409,'The conversation changed. Refresh and try again.');
     if(action!=='review'&&await isBlocked(db,actor,target))fail(403,'Contact is blocked.');
     const at=now();let title='Conversation updated: '+g.title;
@@ -173,7 +173,7 @@ export async function hiringAction({db,user,env,request,body,path}){
     await mutate(db,row,g,target,action,title);
   }else if(kind==='blocks'){
     const mine=await ownProfile(db,user,choose(body.role,['worker','employer'],'role')),target=text(body.target,'profile ID',100);
-    if(target===mine.id||!await first(db,'SELECT id FROM live_profiles WHERE id=?',target))fail(400,'Choose another profile.');
+    if(target===mine.id||!await first(db,'SELECT id FROM available_live_profiles WHERE id=?',target))fail(400,'Choose another profile.');
     if(body.blocked===false)await run(db,'DELETE FROM live_blocks WHERE actor=? AND target=?',mine.id,target);
     else await run(db,'INSERT OR IGNORE INTO live_blocks (actor,target) VALUES (?,?)',mine.id,target);
   }else if(kind==='reports'){
@@ -186,7 +186,7 @@ export async function hiringAction({db,user,env,request,body,path}){
   else if(kind==='payments'){
     const row=await engagementFor(db,user,text(body.engagementId,'engagement ID',100)),g=decoded(row);
     if(!['Confirmed','Completed'].includes(g.status))fail(409,'Confirm work details before recording payment.');
-    const myProfiles=await all(db,'SELECT id FROM live_profiles WHERE user_id=?',user.id),payer=myProfiles.some(p=>p.id===g.employerId);
+    const myProfiles=await all(db,'SELECT id FROM available_live_profiles WHERE user_id=?',user.id),payer=myProfiles.some(p=>p.id===g.employerId);
     if(parts[2]){
       const p=await first(db,'SELECT * FROM live_payments WHERE id=? AND engagement_id=?',parts[2],g.id);if(!p)fail(404,'Payment record not found.');if(payer)fail(403,'Only the worker can acknowledge receipt.');
       const status=choose(body.status,['acknowledged','disputed'],'payment status');await run(db,"UPDATE live_payments SET status=?,confirmed_at=? WHERE id=? AND status='reported'",status,now(),p.id);await notify(db,g.employerId,'payment','Payment '+status+': '+g.title,g.id);
@@ -209,7 +209,7 @@ async function respondToMatch({db,user,env,request,body,parts}){
   if(!row)fail(404,'This worker match is unavailable to your account.');
   if(row.status!=='pending'){if(row.status===(action==='accept'?'invited':'declined'))return hiringState(db,user,env,request);fail(409,'This profile has already been reviewed.');}
   if(action==='decline'){await run(db,"UPDATE live_worker_matches SET status='declined',decided_at=? WHERE id=? AND status='pending'",now(),mid);return hiringState(db,user,env,request);}
-  const worker=await first(db,'SELECT * FROM live_profiles WHERE id=? AND published=1 AND suspended=0',row.worker_id),opening=await first(db,'SELECT * FROM live_openings WHERE id=?',row.opening_id);
+  const worker=await first(db,'SELECT * FROM available_live_profiles WHERE id=? AND published=1 AND suspended=0',row.worker_id),opening=await first(db,'SELECT * FROM live_openings WHERE id=?',row.opening_id);
   if(!worker||!opening||!matchWorker(decoded(worker),{...decoded(opening),status:opening.status})||await isBlocked(db,worker.id,employer.id))fail(409,'This worker or opening is no longer available. Refresh before deciding.');
   if(body.shareDetails!==true)fail(400,'Approve sharing your interview location and contact details with this worker.');
   const t=body.interview;if(!t||typeof t!=='object')fail(400,'Add interview details.');
@@ -231,9 +231,23 @@ export async function adminRoute({db,user,env,request,body,path,passwordHash}){
   if(!await admin(db,user,env))fail(403,'Administrator access is required.');
   if(path==='admin/finance'&&env.PAYMENTS_PRODUCT!=='legacy'&&request.method==='GET')return premiumFinance(db,env);
   if(path.startsWith('admin/finance')){if(env.PAYMENTS_PRODUCT!=='legacy')fail(410,'Salary, wallet and Paystack controls have been retired. Premium revenue is available in the dashboard.');return financeAction({db,user,env,request,body,path,passwordHash});}
+  if(path==='admin/account-lock'&&request.method==='POST'){
+    const target=text(body.userId,'user ID',100),action=choose(body.action,['temporary','permanent','unlocked'],'lock action');
+    const account=await first(db,'SELECT id,email FROM users WHERE id=?',target);if(!account)fail(404,'Account not found.');
+    const owners=String(env.ADMIN_EMAILS||'').split(',').map(v=>v.trim().toLowerCase());
+    if(target===user.id||String(env.ADMIN_USER_IDS||'').split(',').map(v=>v.trim()).includes(target)||owners.includes(account.email.toLowerCase()))fail(400,'Administrator accounts cannot be locked here.');
+    const reason=text(body.reason,'reason',500),until=action==='temporary'?Date.parse(body.untilAt):null;
+    if(action==='temporary'&&(!Number.isFinite(until)||until<=Date.now()||until>Date.now()+366*86400000))fail(400,'Choose a future unlock date within one year.');
+    const at=now();
+    await db.batch([
+      db.prepare('INSERT INTO account_locks(user_id,kind,reason,until_at,updated_at,actor_id) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET kind=excluded.kind,reason=excluded.reason,until_at=excluded.until_at,updated_at=excluded.updated_at,actor_id=excluded.actor_id').bind(target,action,reason,until,at,user.id),
+      db.prepare('INSERT INTO account_lock_events(id,user_id,actor_id,action,reason,until_at,created_at) VALUES(?,?,?,?,?,?,?)').bind(id('lock'),target,user.id,action,reason,until,at),
+    ]);
+    return {ok:true};
+  }
   if(path==='admin/dashboard'&&request.method==='GET')return adminOverview(db,request);
   if(path!=='admin/reports')fail(404,'Admin route not found.');
-  if(request.method==='GET')return {reports:await all(db,'SELECT id,target,kind,reason,details,status,resolution,created_at FROM live_reports ORDER BY created_at DESC LIMIT 250'),counts:{accounts:(await first(db,'SELECT COUNT(*) AS n FROM users')).n,profiles:(await first(db,'SELECT COUNT(*) AS n FROM live_profiles')).n,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n}};
+  if(request.method==='GET')return {reports:await all(db,'SELECT id,target,kind,reason,details,status,resolution,created_at FROM live_reports ORDER BY created_at DESC LIMIT 250'),counts:{accounts:(await first(db,'SELECT COUNT(*) AS n FROM users')).n,profiles:(await first(db,'SELECT COUNT(*) AS n FROM available_live_profiles')).n,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n}};
   const rid=text(body.id,'report ID',100),r=await first(db,'SELECT * FROM live_reports WHERE id=?',rid);if(!r)fail(404,'Report not found.');
   const resolution=text(body.resolution,'resolution',1500);
   choose(body.action,['resolve','hide_profile','close_opening'],'moderation action');

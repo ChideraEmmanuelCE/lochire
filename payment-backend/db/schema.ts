@@ -209,3 +209,11 @@ export const jobAlertOutbox=sqliteTable('lh_job_alert_outbox',{
 export const accountAgeChecks=sqliteTable('account_age_checks',{
  userId:text('user_id').primaryKey().references(()=>users.id),confirmedAt:text('confirmed_at').notNull(),minimumAge:integer('minimum_age').notNull().default(18),method:text('method').notNull(),
 });
+
+// Account restrictions preserve saved profiles and expire without a scheduled task.
+export const accountLocks=sqliteTable('account_locks',{
+ userId:text('user_id').primaryKey().references(()=>users.id),kind:text('kind').notNull(),reason:text('reason').notNull(),untilAt:integer('until_at'),updatedAt:text('updated_at').notNull(),actorId:text('actor_id').notNull().references(()=>users.id),
+});
+export const accountLockEvents=sqliteTable('account_lock_events',{
+ id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),actorId:text('actor_id').notNull().references(()=>users.id),action:text('action').notNull(),reason:text('reason').notNull(),untilAt:integer('until_at'),createdAt:text('created_at').notNull(),
+});

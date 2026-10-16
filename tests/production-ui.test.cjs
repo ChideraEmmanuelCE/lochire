@@ -99,6 +99,8 @@ test('owner dashboard loads real counts, filters users and hides access from oth
     owner.w.dispatchEvent(new owner.w.Event('focus'));await tick();await tick();
     assert.equal(owner.w.document.querySelector('.admin-metric strong').textContent,'2');assert.ok(owner.w.document.querySelector('.admin-chart'));assert.equal(owner.w.document.querySelectorAll('.admin-user').length,2);
     fill(owner,{q:'member',verified:''});await submit(owner,'admin-users-form');assert.equal(owner.w.document.querySelectorAll('.admin-user').length,1);assert.match(owner.w.document.querySelector('.admin-user').textContent,/member@example.test/);
+    await click(owner,'[data-action="admin-lock"]');fill(owner,{action:'temporary',days:2,reason:'Complaint review',confirm:true});await submit(owner,'admin-lock-form');assert.match(owner.w.document.querySelector('.admin-user').textContent,/Locked until/);
+    await click(owner,'[data-action="admin-lock"]');fill(owner,{action:'unlocked',reason:'Review complete',confirm:true});await submit(owner,'admin-lock-form');assert.match(owner.w.document.querySelector('.admin-user').textContent,/Active/);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM account_lock_events').get().n,2);
     fill(owner,{q:'',verified:'yes'});await submit(owner,'admin-users-form');assert.equal(owner.w.document.querySelectorAll('.admin-user').length,1);assert.match(owner.w.document.querySelector('.admin-user').textContent,/owner@example.test/);
     member.w.location.hash='#admin';await tick();assert.match(member.w.document.querySelector('main').textContent,/Administrator access required/);assert.equal(member.w.document.querySelector('#admin-users-form'),null);
     assert.equal(f.errors.length,0);
