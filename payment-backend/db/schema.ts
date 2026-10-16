@@ -164,3 +164,25 @@ export const liveWorkerMatches=sqliteTable('live_worker_matches',{
  workerId:text('worker_id').notNull().references(()=>liveProfiles.id),employerId:text('employer_id').notNull().references(()=>liveProfiles.id),
  status:text('status').notNull().default('pending'),data:text('data').notNull(),createdAt:text('created_at').notNull(),decidedAt:text('decided_at'),engagementId:text('engagement_id'),
 },t=>[uniqueIndex('live_match_opening_worker').on(t.openingId,t.workerId),index('live_match_employer_status').on(t.employerId,t.status),check('live_match_status',sql`${t.status} IN ('pending','invited','declined')`)]);
+
+// Kora sandbox only: these tables never grant live credits or premium benefits.
+export const koraTestAccounts=sqliteTable('kora_test_accounts',{
+ userId:text('user_id').primaryKey().references(()=>users.id),reference:text('reference').notNull().unique(),
+ accountNumber:text('account_number').unique(),accountName:text('account_name'),bankName:text('bank_name'),
+ status:text('status').notNull(),createdAt:text('created_at').notNull(),
+});
+export const koraTestWallets=sqliteTable('kora_test_wallets',{
+ userId:text('user_id').primaryKey().references(()=>users.id),funds:integer('funds').notNull().default(0),earnings:integer('earnings').notNull().default(0),frozen:integer('frozen').notNull().default(0),
+},t=>[check('kora_test_nonnegative',sql`${t.funds}>=0 AND ${t.earnings}>=0`)]);
+export const koraTestDeposits=sqliteTable('kora_test_deposits',{
+ reference:text('reference').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),gross:integer('gross').notNull(),fee:integer('fee').notNull(),net:integer('net').notNull(),applied:integer('applied').notNull().default(0),createdAt:text('created_at').notNull(),
+});
+export const koraTestOperations=sqliteTable('kora_test_operations',{
+ id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),kind:text('kind').notNull(),amount:integer('amount').notNull(),status:text('status').notNull(),data:text('data').notNull(),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[index('kora_test_operations_user').on(t.userId,t.createdAt)]);
+export const koraTestEntries=sqliteTable('kora_test_entries',{
+ id:text('id').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),bucket:text('bucket').notNull(),kind:text('kind').notNull(),amount:integer('amount').notNull(),reference:text('reference').notNull(),createdAt:text('created_at').notNull(),
+},t=>[index('kora_test_entries_user').on(t.userId,t.createdAt)]);
+export const koraTestMemberships=sqliteTable('kora_test_memberships',{
+ userId:text('user_id').primaryKey().references(()=>users.id),expiresAt:text('expires_at').notNull(),
+});

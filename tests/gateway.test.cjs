@@ -117,6 +117,8 @@ test('Kora test keys come only from server settings and never go to unrelated ro
  await invoke({query:{path:'hiring/state'},headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[1].options.headers['x-lochire-kora-test-key'],undefined);
  process.env.KORAPAY_TEST_SECRET_KEY='sk_live_not_allowed';await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[2].options.headers['x-lochire-kora-test-key'],undefined);
  delete process.env.KORAPAY_TEST_SECRET_KEY;await invoke({url:'/api/webhooks/korapay',headers:{'x-lochire-kora-test-key':'sk_test_attacker'}});assert.equal(forwarded[3].options.headers['x-lochire-kora-test-key'],undefined);
+ process.env.KORAPAY_TEST_SECRET_KEY='sk_test_private_gateway_fixture';await invoke({query:{path:'payments/kora/state'}});assert.equal(forwarded[4].options.headers['x-lochire-kora-test-key'],'sk_test_private_gateway_fixture');
+ const denied=await invoke({method:'POST',query:{path:'payments/kora/account'},body:{consent:true}});assert.equal(denied.statusCode,403);
 });
 
 test('custom domain mutations require an exact configured origin and preserve it for the backend',async()=>{

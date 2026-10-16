@@ -1,5 +1,6 @@
 import {billingAction} from './commerce.mjs';
 import {KoraError,koraWebhook,koraWebhookStatus,koraRequestEnvironment} from './korapay.mjs';
+import {koraWalletAction,applySandboxDeposit,reconcileSandboxPayout,checkKoraTestConnection} from './kora-wallet.mjs';
 import {syncWorkerMatches} from './worker-radar.mjs';
 import {deliverWorkEmails} from './work-email.mjs';
 import { requestAccountEmail } from './account-email.mjs';
@@ -340,13 +341,13 @@ async function routeRequest(request,env) {
     if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
-    if(request.method==='GET'&&path==='webhooks/korapay')return send(koraWebhookStatus(koraRequestEnvironment(env,request)));
+    if(request.method==='GET'&&path==='webhooks/korapay'){const koraEnv=koraRequestEnvironment(env,request);return send(new URL(request.url).searchParams.get('check')==='connection'?await checkKoraTestConnection(db,koraEnv):koraWebhookStatus(koraEnv));}
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
     const origin=request.headers.get('origin'),allowedOrigins=new Set([env.APP_ORIGIN,...String(env.ALLOWED_APP_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean)]);
     if(request.method==='POST'&&!path.startsWith('webhooks/')&&!allowedOrigins.has(origin))fail(403,'This request must come from LocHire.');
     if(Number(request.headers.get('content-length')||0)>16000)fail(413,'Request is too large.');
     if(path==='webhooks/paystack'&&request.method==='POST'){const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');return send(await paystackWebhook(db,request,raw,env));}
-    if(path==='webhooks/korapay'&&request.method==='POST'){const raw=await request.text();return send(await koraWebhook(db,request,raw,koraRequestEnvironment(env,request)));}
+    if(path==='webhooks/korapay'&&request.method==='POST'){const raw=await request.text(),koraEnv=koraRequestEnvironment(env,request);return send(await koraWebhook(db,request,raw,koraEnv,koraEnv.KORAPAY_SANDBOX_WALLET_ENABLED==='true'&&koraEnv.KORAPAY_MODE==='test'?{onCharge:d=>applySandboxDeposit(db,koraEnv,d),onPayout:d=>reconcileSandboxPayout(db,koraEnv,d.reference)}:{}));}
     if(live(env)&&path.startsWith('webhooks/wema/'))fail(503,'This bank integration has been retired.');
     let body={};
     if(request.method==='POST') {const raw=await request.text();if(raw.length>16000)fail(413,'Request is too large.');try{body=JSON.parse(raw||'{}');}catch{fail(400,'Invalid JSON request.');}if(!body||Array.isArray(body)||typeof body!=='object')fail(400,'Invalid request body.');}
@@ -369,7 +370,7 @@ async function routeRequest(request,env) {
         const id=uid('LH'),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt),at=stamp();
         await db.batch([
           db.prepare('INSERT INTO users (id,email,name,phone,role,password_hash,password_salt,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(id,email,name,phone,body.role,hash,salt,at),
-          db.prepare("INSERT INTO wallets (user_id,available,held,bank_status,active_role) VALUES (?,0,0,'not_connected',?)").bind(id,body.role==='worker'?'worker':'employer'),
+          db.prepare("INSERT INTO wallets (user_id,available,held,bank_status,active_role) VALUES (?,0,0,'not_connected',?)").bind(id,['worker','employer'].includes(body.activeRole)?body.activeRole:body.role==='worker'?'worker':'employer'),
         ]);
         user=await first(db,'SELECT * FROM users WHERE id=?',id);
       } else {
@@ -394,6 +395,7 @@ async function routeRequest(request,env) {
     if(['auth/password','auth/verification/request','auth/email-preferences'].includes(path)&&request.method==='POST'){await limit(db,'account:'+user.id,10);return send(await accountRoute({db,user,env,request,body,path,passwordHash}));}
     if(live(env)&&path.startsWith('wema/'))fail(503,'This bank integration has been retired.');
     if(['payments/topup','payments/credits/verify','payments/premium/checkout','payments/premium/credits','payments/premium/manage'].includes(path)){await limit(db,'payments:'+user.id,20);return send(await billingAction({db,user,env,request,body,path}));}
+    if(path.startsWith('payments/kora/')){await limit(db,'kora:'+user.id,30);return send(await koraWalletAction({db,user,env:koraRequestEnvironment(env,request),request,body,path,passwordHash}));}
     if(path.startsWith('payments/')){await limit(db,'payments:'+user.id,20);return send(await paymentAction({db,user,env,request,body,path,passwordHash}));}
     if(path==='postcode/lookup'&&request.method==='POST') {
       if(body.consent!==true)fail(400,'Approve sending this postcode to NIPOST before checking it.');

@@ -99,6 +99,13 @@
       "when": 1792002918057,
       "tag": "0013_worker_radar",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792078089636,
+      "tag": "0014_kora_sandbox_wallet",
+      "breakpoints": true
     }
   ]
 }

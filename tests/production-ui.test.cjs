@@ -13,11 +13,11 @@ async function fixture(extraEnv={}){
   const db={prepare(sql){return {bind(...values){return {sql,values,first:async()=>sqlite.prepare(sql).get(...values)||null,all:async()=>({results:sqlite.prepare(sql).all(...values)}),run:async()=>({meta:sqlite.prepare(sql).run(...values)})};}};},async batch(statements){sqlite.exec('BEGIN IMMEDIATE');try{const r=statements.map(s=>({meta:sqlite.prepare(s.sql).run(...s.values)}));sqlite.exec('COMMIT');return r;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
   const env={DB:db,SERVICE_SECRET:'fixture-service-secret',APP_ORIGIN:'https://lochire.vercel.app',APP_MODE:'production',PAYMENT_MODE:'live',WEMA_MODE:'live',WEMA_ENABLED:'false',WEMA_ENVIRONMENT:'production',...extraEnv};
   let ip=0;const errors=[];
-  function browser(options={}){let cookie='';const calls=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e));const dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:env.APP_ORIGIN,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});const w=dom.window;
+  function browser(options={}){let cookie='',stateDelay=null;const calls=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e));const dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:env.APP_ORIGIN,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});const w=dom.window;
     w.scrollTo=()=>{};w.AbortSignal=global.AbortSignal;w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
-    w.fetch=async(url,options={})=>{calls.push({path:String(url),body:options.body?JSON.parse(options.body):null});const request=new Request(new URL(url,env.APP_ORIGIN),{method:options.method||'GET',headers:{'x-lochire-service-key':env.SERVICE_SECRET,'x-lochire-client-ip':'fixture-'+(++ip),origin:env.APP_ORIGIN,...(cookie?{cookie}:{}),...options.headers},body:options.body});const response=await handleRequest(request,env);const set=response.headers.get('set-cookie');if(set)cookie=set.split(';')[0];return response;};
+    w.fetch=async(url,options={})=>{calls.push({path:String(url),body:options.body?JSON.parse(options.body):null});const request=new Request(new URL(url,env.APP_ORIGIN),{method:options.method||'GET',headers:{'x-lochire-service-key':env.SERVICE_SECRET,'x-lochire-client-ip':'fixture-'+(++ip),origin:env.APP_ORIGIN,...(cookie?{cookie}:{}),...options.headers},body:options.body});const response=await handleRequest(request,env);const set=response.headers.get('set-cookie');if(set)cookie=set.split(';')[0];if(stateDelay&&String(url).startsWith('/api/hiring/state')){const gate=stateDelay;stateDelay=null;gate.captured();await gate.wait;}return response;};
     let dark=!!options.dark;const listeners=[];w.matchMedia=()=>({get matches(){return dark;},addEventListener:(event,fn)=>listeners.push(fn)});if(options.theme)w.localStorage.setItem('lochire-theme',options.theme);w.eval(fs.readFileSync(path.join(root,'theme.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'live-domain.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'app.js'),'utf8'));
-    return {w,calls,deviceTheme(value){dark=value;listeners.forEach(fn=>fn());},close:()=>dom.window.close()};
+    return {w,calls,deferNextState(){let captured,release;const ready=new Promise(r=>captured=r),wait=new Promise(r=>release=r);stateDelay={captured,wait};return {ready,release};},deviceTheme(value){dark=value;listeners.forEach(fn=>fn());},close:()=>dom.window.close()};
   }
   return {browser,errors,sqlite};
 }
@@ -148,4 +148,72 @@ test('declined matches stay hidden and workers can pause local promotion without
   await click(e,'#account-button');await click(e,'[data-page="available"]');await click(e,'[data-action="match-decline"]');await submit(e,'match-decline-form');assert.equal(e.w.document.querySelector('.match-card'),null);await click(e,'[data-action="refresh"]');assert.equal(e.w.document.querySelector('.match-card'),null);
   await click(w,'[data-page="profile"]');await click(w,'[data-action="availability-toggle"]');assert.match(w.w.document.querySelector('.availability-panel').textContent,/paused/);await click(w,'[data-action="availability-toggle"]');assert.match(w.w.document.querySelector('.availability-panel').textContent,/Ready for your next opportunity/);assert.equal(f.errors.length,0);
  }finally{w.close();e.close();}
+});
+
+test('private bank sandbox shows test-only accounts, deposits and premium; worker mode only withdraws earnings',async()=>{
+ const original=global.fetch,accounts=new Map(),charges=new Map();let seq=0;
+ global.fetch=async(url,opts={})=>{const u=new URL(url),p=u.pathname.replace('/merchant/api/v1',''),d=opts.body?JSON.parse(opts.body):null;let data;
+  if(p==='/virtual-bank-account'){data={account_reference:d.account_reference,account_number:'0000000001',account_name:'LocHire sandbox tester',bank_name:'Kora Sandbox',account_status:'active',currency:'NGN'};accounts.set(data.account_reference,data);}
+  else if(p==='/virtual-bank-account/sandbox/credit'){const a=[...accounts.values()][0];data=null;const ref='KPY-UI-'+(++seq);charges.set(ref,{reference:ref,currency:'NGN',status:'success',amount:d.amount,amount_paid:d.amount,fee:15,virtual_bank_account:a});}
+  else if(p==='/virtual-bank-account/transactions')data={account_number:'0000000001',currency:'NGN',transactions:[...charges.values()],pagination:{totalPages:1}};
+  else if(p.startsWith('/charges/'))data=charges.get(p.split('/').at(-1));
+  else if(p==='/misc/banks')data=[{name:'Test bank',code:'033'}];
+  else throw Error('Unexpected sandbox request '+p);
+  return Response.json({status:true,data});
+ };
+ const f=await fixture({KORAPAY_MODE:'test',KORAPAY_WEBHOOKS_ENABLED:'true',KORAPAY_SECRET_KEY:'sk_test_ui_fixture',KORAPAY_SANDBOX_WALLET_ENABLED:'true',KORAPAY_TESTER_EMAILS:'sandbox@example.test'}),b=f.browser({theme:'dark'});
+ try{
+  await tick();await register(b,'sandbox');const user=f.sqlite.prepare('SELECT id FROM users WHERE email=?').get('sandbox@example.test');f.sqlite.prepare('INSERT INTO live_account_settings(user_id,email_verified_at) VALUES(?,?)').run(user.id,new Date().toISOString());
+  b.w.dispatchEvent(new b.w.Event('focus'));await tick();await switchRole(b,'employer');await click(b,'#account-button');await click(b,'[data-page="bank-sandbox"]');await tick();
+  assert.match(b.w.document.querySelector('main').textContent,/SIMULATED MONEY ONLY/);assert.ok(b.w.document.querySelector('#kora-account-form'));assert.equal(b.w.document.documentElement.dataset.theme,'dark');
+  const ids=[...b.w.document.querySelectorAll('main [id]')].map(e=>e.id);assert.equal(new Set(ids).size,ids.length);
+  await submit(b,'kora-account-form');assert.match(b.w.document.querySelector('#form-error').textContent,/Approve/);
+  fill(b,{consent:true});await submit(b,'kora-account-form');assert.match(b.w.document.querySelector('main').textContent,/0000000001/);assert.match(b.w.document.querySelector('main').textContent,/Do not transfer real money/);
+  const form=b.w.document.querySelector('#kora-simulate-form');form.querySelector('[name="amount"]').value='3000';form.querySelector('[name="consent"]').checked=true;await submit(b,'kora-simulate-form');assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM kora_test_wallets').get().n,0);
+  await click(b,'[data-action="kora-deposits"]');assert.equal(f.sqlite.prepare('SELECT funds FROM kora_test_wallets WHERE user_id=?').get(user.id).funds,298500);
+  const premium=b.w.document.querySelector('#kora-premium-form');premium.querySelector('[name="password"]').value='SecureFixturePassword123!';premium.querySelector('[name="consent"]').checked=true;await submit(b,'kora-premium-form');assert.equal(f.sqlite.prepare('SELECT funds FROM kora_test_wallets WHERE user_id=?').get(user.id).funds,198500);assert.match(b.w.document.querySelector('main').textContent,/Test premium expires/);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM lh_memberships').get().n,0);
+  await switchRole(b,'worker');await tick();assert.ok(b.w.document.querySelector('#kora-withdraw-form'));assert.equal(b.w.document.querySelector('#kora-simulate-form'),null);assert.equal(b.w.document.querySelector('#kora-premium-form'),null);assert.equal(b.w.document.querySelector('#kora-account-form'),null);
+  assert.equal(f.errors.length,0);
+ }finally{b.close();global.fetch=original;}
+ const other=f.browser();try{await tick();other.w.location.hash='#bank-sandbox';await tick();assert.match(other.w.document.querySelector('main').textContent,/Sign in/);}finally{other.close();}
+});
+
+async function loginSaved(b,label){await click(b,'#account-button');await click(b,'[data-page="account"]');await click(b,'[data-action="auth-login"]');fill(b,{email:label+'@example.test',password:'SecureFixturePassword123!'});await submit(b,'auth-form');}
+async function logoutSaved(b){await click(b,'#account-button');await click(b,'[data-page="account"]');await click(b,'[data-action="logout"]');}
+
+test('own published worker is visible to hirers; filters are visible and role-aware; edit targets worker',async()=>{
+ const f=await fixture(),b=f.browser(),other=f.browser();try{
+  await tick();await register(b,'savedworker');await createProfile(b,true);await switchRole(b,'employer');await click(b,'[data-page="discover"]');assert.match(b.w.document.querySelector('#discovery-list').textContent,/1 workers/);assert.match(b.w.document.querySelector('.card').textContent,/Your profile/);
+  const city=b.w.document.querySelector('[name="search-city"]');city.value='Abuja';city.dispatchEvent(new b.w.Event('input',{bubbles:true}));assert.match(b.w.document.querySelector('#discovery-list').textContent,/No matches for these filters/);assert.match(b.w.document.querySelector('#active-discovery-filters').textContent,/Abuja/);assert.ok(b.w.document.querySelector('#active-discovery-filters [data-action="clear-filters"]'));await click(b,'#active-discovery-filters [data-action="clear-filters"]');assert.match(b.w.document.querySelector('#discovery-list').textContent,/1 workers/);
+  await click(b,'[data-action="view-person"]');assert.equal(b.w.document.querySelector('[data-action="invite"]'),null);await click(b,'[data-action="edit-own-profile"]');assert.equal(b.w.document.querySelector('[name="occupation"]').value,'Plumbing');await click(b,'[data-page="discover"]');const input=b.w.document.querySelector('#discovery-search');input.value='Unmatched phrase';input.dispatchEvent(new b.w.Event('input',{bubbles:true}));await switchRole(b,'employer');assert.equal(b.w.document.querySelector('#discovery-search').value,'');assert.match(b.w.document.querySelector('#discovery-list').textContent,/1 workers/);
+  other.w.dispatchEvent(new other.w.Event('focus'));await tick();await click(other,'[data-action="hire"]');assert.match(other.w.document.querySelector('#discovery-list').textContent,/savedworker/);assert.equal(f.errors.length,0);
+ }finally{b.close();other.close();}
+});
+
+test('logout and fresh sign-in restore both saved profiles and server role, with no data from another account',async()=>{
+ const f=await fixture(),b=f.browser(),fresh=f.browser();try{
+  await tick();await register(b,'persisted');await createProfile(b,true);await switchRole(b,'employer');await createProfile(b,false);const before=f.sqlite.prepare('SELECT id,role,data,revision,published FROM live_profiles ORDER BY id').all();await logoutSaved(b);assert.match(b.w.document.querySelector('#toast').textContent,/profiles are saved/);b.w.location.hash='#profile';await tick();assert.match(b.w.document.querySelector('main').textContent,/same email/);
+  await loginSaved(fresh,'persisted');assert.match(fresh.w.document.querySelector('h1').textContent,/employer profile/);assert.match(fresh.w.document.querySelector('main').textContent,/worker profile is also saved/);assert.match(fresh.w.document.querySelector('.profile-overview').textContent,/Published/);await switchRole(fresh,'worker');assert.match(fresh.w.document.querySelector('.profile-overview').textContent,/Plumbing/);assert.deepEqual(f.sqlite.prepare('SELECT id,role,data,revision,published FROM live_profiles ORDER BY id').all(),before);
+  await switchRole(b,'worker');await register(b,'separate');assert.equal(b.w.document.querySelector('.profile-overview'),null);assert.doesNotMatch(b.w.document.querySelector('main').textContent,/persisted@example/);assert.equal(f.errors.length,0);
+ }finally{b.close();fresh.close();}
+});
+
+test('delayed anonymous refresh cannot replace sign-in or a newly saved profile',async()=>{
+ const f=await fixture(),b=f.browser();let held;try{
+  await tick();await register(b,'raceuser');await createProfile(b,true);await logoutSaved(b);held=b.deferNextState();b.w.dispatchEvent(new b.w.Event('focus'));await held.ready;await loginSaved(b,'raceuser');assert.match(b.w.document.querySelector('.profile-overview').textContent,/Plumbing/);held.release();await tick();await tick();await click(b,'[data-page="profile"]');assert.match(b.w.document.querySelector('.profile-overview').textContent,/Published/);
+  held=b.deferNextState();b.w.dispatchEvent(new b.w.Event('focus'));await held.ready;await click(b,'[data-action="edit-profile"]');fill(b,{speciality:'Updated saved speciality'});await submit(b,'profile-form');held.release();await tick();await click(b,'[data-action="edit-profile"]');assert.equal(b.w.document.querySelector('[name="speciality"]').value,'Updated saved speciality');assert.equal(f.errors.length,0);
+ }finally{held?.release();b.close();}
+});
+
+test('delayed private refresh cannot restore signed-out data or leak into another account',async()=>{
+ const f=await fixture(),b=f.browser();let held;try{
+  await tick();await register(b,'oldaccount');await createProfile(b,true);held=b.deferNextState();b.w.dispatchEvent(new b.w.Event('focus'));await held.ready;await logoutSaved(b);await register(b,'newaccount');held.release();await tick();await click(b,'[data-page="profile"]');assert.equal(b.w.document.querySelector('.profile-overview'),null);assert.match(b.w.document.querySelector('main').textContent,/newaccount@example.test/);assert.doesNotMatch(b.w.document.querySelector('main').textContent,/oldaccount/);assert.equal(f.errors.length,0);
+ }finally{held?.release();b.close();}
+});
+
+
+test('explicit hirer onboarding after login opens the hirer form while retaining the saved worker',async()=>{
+ const f=await fixture(),b=f.browser();try{
+  await tick();await register(b,'switchsignin');await createProfile(b,true);await logoutSaved(b);b.w.location.hash='#join-hirer';await tick();await click(b,'[data-action="be-employer"]');fill(b,{email:'switchsignin@example.test',password:'SecureFixturePassword123!'});await submit(b,'auth-form');assert.equal(b.w.document.querySelector('[name="occupation"]'),null);assert.ok(b.w.document.querySelector('[name="intro"]'));assert.match(b.w.document.querySelector('#role-button').textContent,/Hire/);assert.equal(f.sqlite.prepare("SELECT published FROM live_profiles WHERE role='worker'").get().published,1);assert.equal(f.errors.length,0);
+ }finally{b.close();}
 });

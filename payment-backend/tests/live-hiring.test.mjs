@@ -107,3 +107,10 @@ test('custom domain recovery accepts only the exact configured origins',async()=
  assert.equal((await h.call('auth/forgot',{email:'missing@example.test'},null,{origin:h.env.APP_ORIGIN})).status,200);
  for(const origin of ['https://lochire.ng.evil.test','http://lochire.ng','null'])assert.equal((await h.call('auth/forgot',{email:'missing@example.test'},null,{origin})).status,403);
 });
+
+
+test('logout revokes only the session; fresh login restores both profiles and the saved active role',async()=>{
+ const h=harness(),u=await h.register('savedaccount');await h.call('hiring/profiles/worker',h.worker,u);await h.call('hiring/profiles/employer',h.employer,u);await h.call('wallet/role',{role:'worker'},u);const before=(await h.call('hiring/state',undefined,u)).data;
+ assert.equal((await h.call('auth/logout',{},u)).status,200);const signedOut=(await h.call('hiring/state',undefined,u)).data;assert.equal(signedOut.user,null);assert.equal(signedOut.worker,null);assert.ok(signedOut.workers.some(w=>w.id===before.worker.id));
+ const login=await h.call('auth/login',{email:'savedaccount@example.test',password:'SecureFixturePassword123!'});assert.equal(login.status,200);assert.notEqual(login.cookie,u.cookie);assert.equal(login.data.user.id,u.id);assert.equal(login.data.user.activeRole,'worker');assert.deepEqual(login.data.worker,before.worker);assert.deepEqual(login.data.employer,before.employer);const restored=(await h.call('hiring/state',undefined,{cookie:login.cookie})).data;assert.deepEqual(restored.worker,before.worker);assert.deepEqual(restored.employer,before.employer);
+});

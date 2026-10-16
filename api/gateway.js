@@ -30,7 +30,7 @@ module.exports = async function handler(req,res) {
     // Server-only test-key relay to the authenticated private service. Never
     // copy an incoming client key or send it to any other API route.
     const koraTestKey=process.env.KORAPAY_TEST_SECRET_KEY;
-    if(koraWebhook&&typeof koraTestKey==='string'&&koraTestKey.startsWith('sk_test_'))headers['x-lochire-kora-test-key']=koraTestKey;
+    if((koraWebhook||url.pathname.startsWith('/api/payments/kora/'))&&typeof koraTestKey==='string'&&koraTestKey.startsWith('sk_test_'))headers['x-lochire-kora-test-key']=koraTestKey;
     const sessionCookie=req.headers.cookie?.match(/(?:^|;\s*)(lh_session=[^;]+)/)?.[1];
     if(sessionCookie)headers.cookie=sessionCookie;
     // Vercel sets the forwarded address. Do not trust an arbitrary browser ID.
