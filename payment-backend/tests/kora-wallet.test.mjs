@@ -115,3 +115,13 @@ test('the read-only provider connection probe is cached and never returns keys o
   assert.equal(h.calls.filter(c=>c.path==='/misc/banks').length,1);assert.doesNotMatch(JSON.stringify(a.data),/sk_test|Test bank/);
  }finally{global.fetch=old;}
 });
+
+test('connection failures expose only safe credential, access or network diagnostics',async()=>{
+ const old=global.fetch;try{
+  for(const [http,code] of [[401,'credentials_rejected'],[403,'provider_access_denied'],[500,'provider_unavailable'],[400,'provider_request_rejected']]){
+   const h=await fixture();global.fetch=async()=>Response.json({status:false,message:'private-provider-detail',secret:'must-not-return'},{status:http});
+   const r=await h.call('webhooks/korapay?check=connection');assert.deepEqual(r.data,{verified:false,mode:'test',status:code});assert.doesNotMatch(JSON.stringify(r.data),/private-provider-detail|must-not-return/);
+  }
+  const h=await fixture();global.fetch=async()=>{throw Error('private-network-detail');};assert.equal((await h.call('webhooks/korapay?check=connection')).data.status,'provider_unreachable');
+ }finally{global.fetch=old;}
+});

@@ -35,7 +35,7 @@ export async function checkKoraTestConnection(db,env){
  if(!row){const r=await run(db,"INSERT OR IGNORE INTO bank_events VALUES(?,?,'checking',?)",id,id,time);if(r.meta?.changes!==1)return {verified:false,mode:'test',status:'checking'};}
  else {const r=await run(db,"UPDATE bank_events SET state='checking',created_at=? WHERE id=? AND created_at<=?",time,id,cutoff);if(r.meta?.changes!==1)return {verified:false,mode:'test',status:'checking'};}
  try{const banks=await koraApi(env,'/misc/banks?countryCode=NG');if(!Array.isArray(banks)||!banks.length)fail(503,'Kora returned an unexpected bank list.');await run(db,"UPDATE bank_events SET state='verified' WHERE id=?",id);return {verified:true,mode:'test',status:'verified'};}
- catch{await run(db,"UPDATE bank_events SET state='unavailable' WHERE id=?",id);return {verified:false,mode:'test',status:'unavailable'};}
+ catch(error){const status=['credentials_rejected','provider_access_denied','provider_request_rejected','provider_unreachable','provider_unavailable'].includes(error.code)?error.code:'provider_unavailable';await run(db,'UPDATE bank_events SET state=? WHERE id=?',status,id);return {verified:false,mode:'test',status};}
 }
 
 export async function koraWalletState(db,user,env){

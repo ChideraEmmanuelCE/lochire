@@ -1,9 +1,9 @@
 // Kora test API and verified notification contracts. The isolated test ledger
 // lives in kora-wallet.mjs; real funding and payouts remain disabled.
 export class KoraError extends Error {
-  constructor(status,message){super(message);this.status=status;}
+  constructor(status,message,code='provider_unavailable'){super(message);this.status=status;this.code=code;}
 }
-const fail=(status,message)=>{throw new KoraError(status,message);};
+const fail=(status,message,code)=>{throw new KoraError(status,message,code);};
 const encoder=new TextEncoder();
 const hex=bytes=>Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
 const equal=(a,b)=>{if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;let difference=0;for(let i=0;i<a.length;i++)difference|=a.charCodeAt(i)^b.charCodeAt(i);return difference===0;};
@@ -29,9 +29,9 @@ export async function koraApi(env,path,body){
   if(!koraWebhookStatus(env).webhookReady||env.KORAPAY_MODE==='live'||!String(env.KORAPAY_SECRET_KEY||'').startsWith('sk_test_'))fail(503,'The Kora sandbox requires a test key. Live wallet payments are disabled.');
   let response;
   try {response=await fetch('https://api.korapay.com/merchant/api/v1'+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+env.KORAPAY_SECRET_KEY,Accept:'application/json','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(15000)});}
-  catch{fail(503,'Kora could not be reached. Check the saved operation before retrying.');}
+  catch{fail(503,'Kora could not be reached. Check the saved operation before retrying.','provider_unreachable');}
   const result=await response.json().catch(()=>null);
-  if(!response.ok||result?.status!==true)fail(503,'Kora could not confirm this sandbox request. Check its saved status.');
+  if(!response.ok||result?.status!==true){const code=response.status===401?'credentials_rejected':response.status===403?'provider_access_denied':response.status>=500?'provider_unavailable':'provider_request_rejected';fail(503,response.status===401?'Kora rejected the saved test key. Check the private server configuration.':response.status===403?'Kora denied sandbox access. Check API access and IP restrictions in your Kora account.':'Kora could not confirm this sandbox request. Check its saved status.',code);}
   return result.data;
 }
 
