@@ -120,6 +120,13 @@
       "when": 1792140427291,
       "tag": "0016_zippy_onslaught",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1792160327647,
+      "tag": "0017_remove_confirmed_demo_accounts",
+      "breakpoints": true
     }
   ]
 }
