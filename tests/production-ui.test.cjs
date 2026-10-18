@@ -16,7 +16,7 @@ async function fixture(extraEnv={}){
   function browser(options={}){let cookie='',stateDelay=null;const calls=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e));const dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:env.APP_ORIGIN,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});const w=dom.window;
     w.scrollTo=()=>{};w.AbortSignal=global.AbortSignal;w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
     w.fetch=async(url,options={})=>{calls.push({path:String(url),body:options.body?JSON.parse(options.body):null});const request=new Request(new URL(url,env.APP_ORIGIN),{method:options.method||'GET',headers:{'x-lochire-service-key':env.SERVICE_SECRET,'x-lochire-client-ip':'fixture-'+(++ip),origin:env.APP_ORIGIN,...(cookie?{cookie}:{}),...options.headers},body:options.body});const response=await handleRequest(request,env);const set=response.headers.get('set-cookie');if(set)cookie=set.split(';')[0];if(stateDelay&&String(url).startsWith('/api/hiring/state')){const gate=stateDelay;stateDelay=null;gate.captured();await gate.wait;}return response;};
-    let dark=!!options.dark;const listeners=[];w.matchMedia=()=>({get matches(){return dark;},addEventListener:(event,fn)=>listeners.push(fn)});if(options.theme)w.localStorage.setItem('lochire-theme',options.theme);w.eval(fs.readFileSync(path.join(root,'theme.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'live-domain.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'app.js'),'utf8'));
+    let dark=!!options.dark;const listeners=[];w.matchMedia=()=>({get matches(){return dark;},addEventListener:(event,fn)=>listeners.push(fn)});if(options.theme)w.localStorage.setItem('lochire-theme',options.theme);w.eval(fs.readFileSync(path.join(root,'theme.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'live-domain.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'profile-photo.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'app.js'),'utf8'));
     return {w,calls,deferNextState(){let captured,release;const ready=new Promise(r=>captured=r),wait=new Promise(r=>release=r);stateDelay={captured,wait};return {ready,release};},deviceTheme(value){dark=value;listeners.forEach(fn=>fn());},close:()=>dom.window.close()};
   }
   return {browser,errors,sqlite};
@@ -245,4 +245,18 @@ test('chat viewing starts recipient-only expiry and expired bubbles clear withou
   f.sqlite.prepare('UPDATE message_views SET expires_at=?').run(Date.now()-1000);
   w.w.dispatchEvent(new w.w.Event('focus'));await tick();await new Promise(resolve=>setTimeout(resolve,1100));assert.equal(w.w.document.querySelector('.message[data-message-id]'),null);assert.equal(w.w.document.querySelector('[name="text"]').value,'My unsent draft');assert.equal(f.errors.length,0);
  }finally{w.close();e.close();}
+});
+
+test('registration previews a tiny photo and both parties see it; existing accounts can replace or remove it',async()=>{
+ const f=await fixture(),b=f.browser(),visitor=f.browser(),fixturePhoto=JSON.parse(fs.readFileSync(path.join(root,'payment-backend/tests/fixtures/profile-photo.json'),'utf8'));
+ try{
+  await tick();await click(b,'#account-button');await click(b,'[data-page="account"]');await click(b,'[data-action="auth-register"]');
+  assert.ok(b.w.document.querySelector('[data-photo-file]'));b.w.LocHirePhoto.compress=async()=>fixturePhoto;
+  const input=b.w.document.querySelector('[data-photo-file]');Object.defineProperty(input,'files',{value:[new b.w.File(['original'], 'portrait.jpg',{type:'image/jpeg'})]});input.dispatchEvent(new b.w.Event('change',{bubbles:true}));await tick();assert.match(b.w.document.querySelector('.photo-status').textContent,/Photo ready/);assert.equal(b.w.document.querySelector('.photo-preview img').getAttribute('src'),fixturePhoto.data);
+  fill(b,{name:'Photographed worker',email:'photographed@example.test',phone:'08012345678',password:'SecureFixturePassword123!',termsConsent:true,dateOfBirth:'1995-01-01',adultConsent:true});await submit(b,'auth-form');const signup=b.calls.find(c=>c.path==='/api/auth/register');assert.equal(signup.body.photo,fixturePhoto.data);assert.ok(signup.body.photo.length<5000);assert.equal(JSON.stringify(signup.body).includes('original'),false);
+  await createProfile(b,true);assert.equal(b.w.document.querySelector('.profile-overview img').src,fixturePhoto.data);
+  await click(visitor,'[data-action="hire"]');await click(visitor,'[data-action="refresh"]');assert.equal(visitor.w.document.querySelector('.card img').src,fixturePhoto.data);await click(visitor,'[data-action="view-person"]');assert.equal(visitor.w.document.querySelector('.public-profile-photo img').src,fixturePhoto.data);
+  await click(b,'#account-button');await click(b,'[data-page="account"]');await click(b,'[data-action="remove-photo"]');await submit(b,'account-photo-form');assert.equal(b.w.document.querySelector('.account-summary img'),null);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM account_photos').get().n,0);
+  assert.equal(f.errors.length,0);
+ }finally{b.close();visitor.close();}
 });

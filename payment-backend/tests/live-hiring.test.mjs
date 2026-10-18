@@ -10,7 +10,7 @@ function harness(){
   const db={prepare(sql){return {bind(...values){return {sql,values,first:async()=>sqlite.prepare(sql).get(...values)||null,all:async()=>({results:sqlite.prepare(sql).all(...values)}),run:async()=>({meta:sqlite.prepare(sql).run(...values)})};}};},async batch(statements){sqlite.exec('BEGIN IMMEDIATE');try{const r=statements.map(s=>({meta:sqlite.prepare(s.sql).run(...s.values)}));sqlite.exec('COMMIT');return r;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
   const env={PAYMENTS_PRODUCT:'legacy',DB:db,SERVICE_SECRET:'private-test-service',APP_ORIGIN:'https://lochire.vercel.app',APP_MODE:'production',PAYMENT_MODE:'live',WEMA_MODE:'live',WEMA_ENVIRONMENT:'production',WEMA_ENABLED:'false',ADMIN_EMAILS:'owner@example.test'};let count=0;
   async function call(path,body,user,headers={}){const req=new Request('https://private.test/api/'+path,{method:body===undefined?'GET':'POST',headers:{'x-lochire-service-key':env.SERVICE_SECRET,origin:env.APP_ORIGIN,'x-lochire-client-ip':'fixture-'+(++count),...(user?.cookie?{cookie:user.cookie}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});const response=await handleRequest(req,env);return {status:response.status,data:await response.json(),cookie:response.headers.get('set-cookie')?.split(';')[0]};}
-  async function register(name){const r=await call('auth/register',{name,email:name+'@example.test',phone:'08012345678',role:'both',password:'SecureFixturePassword123!',termsConsent:true,dateOfBirth:'1995-01-01',adultConsent:true});assert.equal(r.status,201,JSON.stringify(r.data));return {id:r.data.user.id,cookie:r.cookie,name};}
+  async function register(name,extra={}){const r=await call('auth/register',{name,email:name+'@example.test',phone:'08012345678',role:'both',password:'SecureFixturePassword123!',termsConsent:true,dateOfBirth:'1995-01-01',adultConsent:true,...extra});assert.equal(r.status,201,JSON.stringify(r.data));return {id:r.data.user.id,cookie:r.cookie,name};}
   const future=new Date(Date.now()+86400000).toISOString().slice(0,10);
   const worker={name:'Fixture artisan',city:'Ibadan',area:'Jericho',occupation:'Plumbing',speciality:'Leak repairs',skills:['Pipe fitting'],years:4,experience:'Repairs and installation',types:['One-off task','Ongoing job'],days:['Mon','Tue','Wed','Thu','Fri'],hoursStart:'08:00',hoursEnd:'17:00',start:future,coverage:['Jericho'],travel:true,flexible:false,pay:20000,basis:'Per task',accommodation:'Not applicable',published:true,acceptingBookings:true,coordinates:{lat:7.406231,lon:3.861951,accuracy:15}};
   const employer={name:'Fixture hirer',city:'Ibadan',area:'Jericho',type:'Household',intro:'Home repair work',business:''};
@@ -138,4 +138,21 @@ test('messages expire for both people exactly two hours after recipient viewing,
   assert.equal((await h.call('hiring/engagements/'+gid+'/message',{revision,text:'Old tab write'},w)).status,409,'stale writes cannot restore expired text');
   assert.equal((await h.call('hiring/engagements/'+gid+'/viewed',{messageIds:'all'},w)).status,400);
  }finally{Date.now=original;}
+});
+
+test('one compact account photo appears on both roles, survives sign-in and rejects unsafe or oversized input',async()=>{
+ const photo=JSON.parse(readFileSync(new URL('./fixtures/profile-photo.json',import.meta.url),'utf8')).data;
+ const h=harness(),{e,w,outsider,oid}=await h.setup();
+ let r=await h.call('auth/photo',{photo},e);assert.equal(r.status,200);
+ r=await h.call('hiring/profiles/worker',h.worker,e);assert.equal(r.status,200);assert.equal(r.data.worker.photo,photo);assert.equal(r.data.employer.photo,photo);assert.equal(r.data.user.photo,photo);
+ const publicState=(await h.call('hiring/state')).data;assert.equal(publicState.workers.find(p=>p.id===r.data.worker.id).photo,photo);assert.equal(publicState.employers.find(p=>p.id===e.profile).photo,photo);
+ r=await h.call('auth/login',{email:'hirer@example.test',password:'SecureFixturePassword123!'});assert.equal(r.status,200);assert.equal(r.data.user.photo,photo);
+ assert.equal((await h.call('auth/photo',{photo})).status,401);
+ for(const invalid of ['https://bad.test/p.jpg','data:image/svg+xml;base64,PHN2Zz4=',photo+'a'.repeat(5000),'data:image/jpeg;base64,AAAA'])assert.equal((await h.call('auth/photo',{photo:invalid},e)).status,400);
+ assert.equal((await h.call('hiring/state',undefined,e)).data.user.photo,photo,'invalid updates retain saved photo');
+ assert.equal((await h.call('hiring/state',undefined,outsider)).data.user.photo,null,'one account cannot change another account photo');
+ const own=(await h.call('hiring/state',undefined,e)).data.employer;assert.equal((await h.call('hiring/profiles/employer',{...own,photo:'https://bad.test/spoof'},e)).status,200);assert.equal((await h.call('hiring/state',undefined,e)).data.employer.photo,photo);
+ await h.call('auth/photo',{photo:null},e);assert.equal((await h.call('hiring/state',undefined,e)).data.worker.photo,null);assert.equal((await h.call('hiring/state',undefined,e)).data.employer.photo,null);
+ const n=await h.register('photo-signup',{photo});assert.equal((await h.call('hiring/state',undefined,n)).data.user.photo,photo);
+ const invalidSignup=await h.call('auth/register',{name:'Invalid photo',email:'invalid-photo@example.test',phone:'08012345678',role:'both',password:'SecureFixturePassword123!',termsConsent:true,dateOfBirth:'1995-01-01',adultConsent:true,photo:'data:image/svg+xml;base64,AAAA'});assert.equal(invalidSignup.status,400);
 });

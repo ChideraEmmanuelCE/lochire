@@ -1,3 +1,4 @@
+import {getAccountPhoto} from './profile-photo.mjs';
 import {messageViews,visibleMessages,purgeExpiredMessages,markMessagesViewed} from './message-expiry.mjs';
 import {calendarDate,reviewEligibility} from './eligibility.mjs';
 import {premiumState,premiumAccess,premiumFinance} from './premium.mjs';
@@ -33,7 +34,7 @@ export const live=env=>env.APP_MODE==='production';
 
 async function admin(db,user,env){if(!user)return false;if(String(env.ADMIN_USER_IDS||'').split(',').includes(user.id))return true;if(!String(env.ADMIN_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).includes(user.email))return false;return !!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at;}
 const profileId=(user,role)=>role+'-'+user.id;
-const decoded=row=>row?{...JSON.parse(row.data),id:row.id,revision:row.revision,...(row.role?{published:row.published===1,suspended:row.suspended===1}:{})}:null;
+const decoded=row=>row?{...JSON.parse(row.data),id:row.id,revision:row.revision,...(row.role?{published:row.published===1,suspended:row.suspended===1,photo:row.account_photo||null}:{})}:null;
 async function ownProfile(db,user,role){if(!user)fail(401,'Sign in to LocHire first.');const row=await first(db,'SELECT * FROM available_live_profiles WHERE user_id=? AND role=?',user.id,role);if(row?.suspended)fail(403,'Your profile is suspended pending review.');if(!row)fail(409,'Create your '+role+' profile first.');return row;}
 const publicProfile=p=>{const {email,phone,coordinates,contactEmailShared,postcode,...safe}=p;return safe;};
 async function isBlocked(db,a,b){return !!await first(db,'SELECT actor FROM live_blocks WHERE (actor=? AND target=?) OR (actor=? AND target=?)',a,b,b,a);}
@@ -65,8 +66,8 @@ export async function hiringState(db,user,env,request){
   await purgeExpiredMessages(db);
   const u=new URL(request.url),lat=Number(u.searchParams.get('lat')),lon=Number(u.searchParams.get('lon'));
   const searchPoint=u.searchParams.has('lat')&&u.searchParams.has('lon')&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180?{lat,lon}:null;
-  const rows=await all(db,'SELECT * FROM available_live_profiles WHERE published=1 AND suspended=0 ORDER BY updated_at DESC');
-  const ownRows=user?await all(db,'SELECT * FROM available_live_profiles WHERE user_id=?',user.id):[];
+  const rows=await all(db,'SELECT p.*,a.data_uri AS account_photo FROM available_live_profiles p LEFT JOIN account_photos a ON a.user_id=p.user_id WHERE p.published=1 AND p.suspended=0 ORDER BY p.updated_at DESC');
+  const ownRows=user?await all(db,'SELECT p.*,a.data_uri AS account_photo FROM available_live_profiles p LEFT JOIN account_photos a ON a.user_id=p.user_id WHERE p.user_id=?',user.id):[];
   const blocks=user?await all(db,'SELECT actor,target FROM live_blocks WHERE actor IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR target IN (SELECT id FROM available_live_profiles WHERE user_id=?)',user.id,user.id):[];
   const blockedProfiles=new Set(blocks.flatMap(b=>[b.actor,b.target]).filter(pid=>!ownRows.some(p=>p.id===pid)));
   const canHire=ownRows.some(r=>r.role==='employer'&&r.published&&!r.suspended);
@@ -89,14 +90,14 @@ export async function hiringState(db,user,env,request){
   engagements=await Promise.all(engagements.map(async g=>({...g,messages:visibleMessages(g.messages,await messageViews(db,g)),reviewEligibility:reviewEligibility(g)})));
   // Profiles belonging to an active conversation remain visible to its participants.
   const participantIds=[...new Set(engagements.flatMap(g=>[g.workerId,g.employerId]))];
-  for(const pid of participantIds)if(!published.some(p=>p.id===pid)){const r=await first(db,'SELECT * FROM available_live_profiles WHERE id=?',pid);if(r)published.push(publicProfile(decoded(r)));}
+  for(const pid of participantIds)if(!published.some(p=>p.id===pid)){const r=await first(db,'SELECT p.*,a.data_uri AS account_photo FROM available_live_profiles p LEFT JOIN account_photos a ON a.user_id=p.user_id WHERE p.id=?',pid);if(r)published.push(publicProfile(decoded(r)));}
   const reviews=await all(db,'SELECT id,engagement_id AS engagementId,author,target,rating,text,created_at AS at FROM live_reviews ORDER BY created_at DESC LIMIT 1000');
   const walletRole=user?await first(db,'SELECT active_role FROM wallets WHERE user_id=?',user.id):null;
   const settings=user?await first(db,'SELECT email_verified_at,hiring_email_enabled FROM live_account_settings WHERE user_id=?',user.id):null;
   const payments=user?await all(db,'SELECT p.* FROM live_payments p JOIN available_live_profiles a ON a.id=p.payer JOIN available_live_profiles b ON b.id=p.recipient WHERE a.user_id=? OR b.user_id=? ORDER BY created_at DESC LIMIT 250',user.id,user.id):[];
   const hirer=ownRows.find(r=>r.role==='employer'&&r.published&&!r.suspended);
   const workerMatches=hirer?await workerMatchFeed(db,hirer.id):[];
-  return {workerMatches,...(env.PAYMENTS_PRODUCT==='legacy'?{koraSandboxAvailable:koraSandboxAvailable(user,env),...await onlineState(db,user,env),...await billingState(db,user,env)}:await premiumState(db,user,env)),version:5,user:user?{id:user.id,name:user.name,email:user.email,phone:user.phone,role:user.role,activeRole:walletRole?.active_role,emailVerified:!!settings?.email_verified_at,emailAlertsEnabled:settings?.hiring_email_enabled!==0}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
+  return {workerMatches,...(env.PAYMENTS_PRODUCT==='legacy'?{koraSandboxAvailable:koraSandboxAvailable(user,env),...await onlineState(db,user,env),...await billingState(db,user,env)}:await premiumState(db,user,env)),version:5,user:user?{id:user.id,name:user.name,photo:await getAccountPhoto(db,user.id),email:user.email,phone:user.phone,role:user.role,activeRole:walletRole?.active_role,emailVerified:!!settings?.email_verified_at,emailAlertsEnabled:settings?.hiring_email_enabled!==0}:null,admin:await admin(db,user,env),worker:decoded(ownRows.find(r=>r.role==='worker')),employer:decoded(ownRows.find(r=>r.role==='employer')),workers:published.filter(p=>p.occupation),employers:published.filter(p=>!p.occupation),openings,engagements,reviews:reviews.map(r=>({...r,verified:true})),blocks,notifications:user?await all(db,'SELECT * FROM live_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',user.id):[],payments,counts:{workers:published.filter(p=>p.occupation).length,openings:openings.filter(o=>o.status==='Open').length},reports:user?await all(db,'SELECT id,reason,status,resolution,created_at FROM live_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 50',user.id):[],storage:'persistent',emailReady:emailReady(env,user?.email),verificationRequired:!!user&&emailReady(env,user?.email)&&!settings?.email_verified_at};
 }
 async function engagementFor(db,user,gid){const row=await first(db,'SELECT g.* FROM live_engagements g WHERE id=? AND (worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?))',gid,user.id,user.id);if(!row)fail(404,'This engagement is not available to your account.');return row;}
 async function mutate(db,row,g,target,kind,title,extra=[]){

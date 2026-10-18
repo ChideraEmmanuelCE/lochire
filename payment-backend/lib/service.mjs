@@ -1,3 +1,4 @@
+import {validateProfilePhoto} from './profile-photo.mjs';
 import {activeAccountLock,lockMessage} from './account-locks.mjs';
 import {adultRegistrationError} from './eligibility.mjs';
 import {premiumAction,premiumWebhook,premiumState,premiumReadiness,drainJobAlertOutbox} from './premium.mjs';
@@ -370,6 +371,7 @@ async function routeRequest(request,env) {
       let user;
       if(path==='auth/register') {
         const ageError=adultRegistrationError(body.dateOfBirth,body.adultConsent);if(ageError)fail(400,ageError);
+        let photo;try{photo=validateProfilePhoto(body.photo);}catch(error){fail(400,error.message);}
         const name=clean(body.name,'name',70),phone=clean(body.phone,'phone number',20);
         if(!/^(\+234|0)\d{10}$/.test(phone))fail(400,'Use a Nigerian number, starting with 0 or +234.');
         if(!['worker','employer','both'].includes(body.role))fail(400,'Choose worker, employer or both.');
@@ -379,6 +381,7 @@ async function routeRequest(request,env) {
         await db.batch([
           db.prepare('INSERT INTO users (id,email,name,phone,role,password_hash,password_salt,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(id,email,name,phone,body.role,hash,salt,at),
           db.prepare("INSERT INTO wallets (user_id,available,held,bank_status,active_role) VALUES (?,0,0,'not_connected',?)").bind(id,['worker','employer'].includes(body.activeRole)?body.activeRole:body.role==='worker'?'worker':'employer'),
+          ...(photo?[db.prepare('INSERT INTO account_photos(user_id,data_uri,updated_at) VALUES(?,?,?)').bind(id,photo,at)]:[]),
           db.prepare('INSERT INTO account_age_checks(user_id,confirmed_at,minimum_age,method) VALUES(?,?,18,?)').bind(id,at,'declared_date_of_birth'),
         ]);
         user=await first(db,'SELECT * FROM users WHERE id=?',id);
@@ -399,6 +402,7 @@ async function routeRequest(request,env) {
       return send({ok:true},200,{'Set-Cookie':'lh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'});
     }
     const user=await session(db,request);
+    if(path==='auth/photo'&&request.method==='POST'){await limit(db,'photo:'+user.id,20);let photo;try{photo=validateProfilePhoto(body.photo);}catch(error){fail(400,error.message);}if(photo)await run(db,'INSERT INTO account_photos(user_id,data_uri,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data_uri=excluded.data_uri,updated_at=excluded.updated_at',user.id,photo,stamp());else await run(db,'DELETE FROM account_photos WHERE user_id=?',user.id);return send({ok:true,photo});}
     if(live(env)&&emailReady(env,user.email)&&request.method==='POST'&&(path.startsWith('hiring/')||path.startsWith('payments/'))&&!(await first(db,'SELECT email_verified_at FROM live_account_settings WHERE user_id=?',user.id))?.email_verified_at)fail(403,'Verify your email before creating a profile, arranging work or making payments.');
     if(path.startsWith('hiring/')&&request.method==='POST')return send(await hiringAction({db,user,env,request,body,path}));
     if(path.startsWith('admin/'))return send(await adminRoute({db,user,env,request,body,path,passwordHash}));
