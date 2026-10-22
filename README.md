@@ -2,7 +2,7 @@
 
 **Find local workers. Find work near you.**
 
-Live app: https://lochire.vercel.app/
+Live app: https://lochire.ng/
 
 LocHire is now an authenticated hiring platform. Profiles, openings, invitations, messages, work agreements, completion, reviews, notifications and reports are saved in a shared server database. Visitors see real published listings; there are no seeded workers, fictional jobs or simulated counterpart controls in the production frontend. Previous browser-local examples are not imported.
 
@@ -15,13 +15,13 @@ LocHire is now an authenticated hiring platform. Profiles, openings, invitations
 5. Each participant confirms completion. Reviews become available only after both confirm.
 6. A hirer can declare a direct cash or bank-transfer payment. Only the worker can acknowledge receipt or dispute that record. Acknowledged earnings are not a spendable wallet balance.
 
-Workers connect their bank account in Payments. Hirers pay the agreed price using hosted checkout; Paystack handles settlement to the worker. Cash and direct-transfer records remain available separately. The footer is removed; Account contains Help, Privacy and guidance.
+Workers buy optional 30-day access through Paystack: Premium is ₦900 and Premium Plus is ₦1,200. Plus includes matching new-job emails. Participants arrange salary and task payments directly; cash and bank-transfer acknowledgements remain separate.
 
 ## Payment activation
 
-Paystack replaces the previous bank-specific integration. Hosted checkout, private bank-account confirmation/subaccounts, durable payment attempts, participant status checks and signed webhooks are implemented. Production money movement remains unavailable until the owner's activated Paystack account and live secret are configured and actual provider tests are completed. See `docs/PROVIDER_SETUP.md` for the exact setup.
+The server initializes Paystack hosted checkout for LocHire's own premium fees. It verifies the saved reference, amount, currency, customer, account/tier metadata and test/live mode before granting access. Signed webhooks preserve the exact raw body; retries cannot grant duplicate passes, and confirmed refunds revoke the affected pass. Existing premium access carries over from Kora.
 
-Worker earnings use direct bank settlement rather than a stored-value worker wallet. Hirer-only premium credits have a separate balance and funding flow; they cannot pay workers or be withdrawn as work earnings. Platform share is currently zero; processing fees are deducted from the worker's settlement. Paid status confirms the charge, not bank receipt. Refund initiation and ambiguous provider-request recovery currently use merchant support/dashboard operations.
+Set the live `PAYSTACK_SECRET_KEY` securely in Vercel's production environment, configure the Paystack webhook and redeploy. See `docs/PROVIDER_SETUP.md` for exact settings. Checkout remains unavailable until the key is configured. No public key, worker subaccounts, salary collection, credits or withdrawals are used by the current product.
 
 **Email verification and password recovery need `RESEND_API_KEY` and a verified `EMAIL_FROM` in private backend runtime settings.** The app reports missing delivery instead of claiming an email was sent. In-app notifications and authenticated password changes already work. Password changes revoke all sessions. New hiring and payment notifications queue privacy-preserving work email alerts to verified account emails. Settings controls the work-email preference; account security mail is unaffected. Delivery attempts are saved and retried on later authenticated activity, using provider idempotency keys; historical inbox records are not emailed. The owner dashboard shows provider acceptance, pending deliveries and failures.
 
@@ -39,9 +39,9 @@ The Vercel frontend calls the same-origin `api/gateway.js`. The gateway forwards
 
 Frontend project: `lochire`, team `RIDEA`, domain `lochire.vercel.app`, repository `ChideraEmmanuelCE/lochire`.
 
-Backend identity is preserved in `payment-backend/.openai/hosting.json`. A frontend GitHub push does not publish the backend. Backend changes must also pass the Sites source, build, save and deploy workflow. Migrations 0008–0009 add the live hiring and Paystack schema without changing applied migrations or erasing historical data.
+Backend identity is preserved in `payment-backend/.openai/hosting.json`. A frontend GitHub push does not publish the backend. Backend changes must also pass the Sites source, build, save and deploy workflow. Migration 0022 adds a provider label to premium orders without replacing historical orders or access grants.
 
-Runtime: `APP_MODE=production`, `PAYMENT_MODE=live`, `PAYSTACK_MODE=live`, `PAYSTACK_ENABLED=false` until activation. Gateway credentials and the backend's `SERVICE_SECRET` remain private.
+Runtime: `APP_MODE=production`, `PAYMENT_MODE=live`, `PAYSTACK_MODE=live`, `PAYMENTS_PRODUCT=premium`, `PAYSTACK_PREMIUM_ENABLED=true`. Keep the legacy salary-payment flag `PAYSTACK_ENABLED=false`. Gateway credentials and the backend's `SERVICE_SECRET` remain private.
 
 ## Development checks
 

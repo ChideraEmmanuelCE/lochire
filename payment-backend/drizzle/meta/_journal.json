@@ -155,6 +155,13 @@
       "when": 1792308358761,
       "tag": "0021_account_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792675997327,
+      "tag": "0022_cool_mulholland_black",
+      "breakpoints": true
     }
   ]
 }

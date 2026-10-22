@@ -1,3 +1,5 @@
+> Historical Kora integration only. New premium purchases use Paystack. See [PAYSTACK_PREMIUM_SETUP.md](PAYSTACK_PREMIUM_SETUP.md). Do not activate Kora checkout using this older guide.
+
 # LocHire premium access through Kora
 
 LocHire sells worker access, not salary processing, deposits or withdrawals.

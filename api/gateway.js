@@ -48,8 +48,8 @@ module.exports = async function handler(req,res) {
       return res.status(200).json(data);
     }
     const origin=process.env.APP_ORIGIN||'https://lochire.vercel.app',allowedOrigins=new Set([origin,...String(process.env.ALLOWED_APP_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean)]);
-    if(url.pathname==='/api/webhooks/paystack'||url.pathname.startsWith('/api/webhooks/wema/'))return res.status(410).json({error:'This payment integration has been retired.'});
-    const paystackWebhook=false;
+    if(url.pathname.startsWith('/api/webhooks/wema/'))return res.status(410).json({error:'This payment integration has been retired.'});
+    const paystackWebhook=url.pathname==='/api/webhooks/paystack';
     const koraWebhook=url.pathname==='/api/webhooks/korapay';
     const webhook=paystackWebhook||koraWebhook||url.pathname.startsWith('/api/webhooks/wema/');
     if(req.method==='POST'&&!webhook&&!allowedOrigins.has(req.headers.origin))return res.status(403).json({error:'This request must come from LocHire.'});
@@ -59,6 +59,11 @@ module.exports = async function handler(req,res) {
     // copy an incoming client key or send it to any other API route.
     const koraTestKey=process.env.KORAPAY_TEST_SECRET_KEY;
     if((koraWebhook||url.pathname.startsWith('/api/payments/premium/')||url.pathname==='/api/hiring/state'||url.pathname==='/api/config')&&typeof koraTestKey==='string'&&koraTestKey.startsWith('sk_test_'))headers['x-lochire-kora-test-key']=koraTestKey;
+    // Ignore client-supplied keys. Only the server's saved Paystack key may
+    // reach LocHire's authenticated private backend, never the response body.
+    const paystackKey=process.env.PAYSTACK_SECRET_KEY;
+    const paystackRoute=paystackWebhook||url.pathname.startsWith('/api/payments/premium/')||url.pathname.startsWith('/api/hiring/')||['/api/config','/api/auth/login','/api/auth/register','/api/wallet/role'].includes(url.pathname);
+    if(paystackRoute&&typeof paystackKey==='string'&&/^sk_(live|test)_/.test(paystackKey))headers['x-lochire-paystack-key']=paystackKey;
     const sessionCookie=req.headers.cookie?.match(/(?:^|;\s*)(lh_session=[^;]+)/)?.[1];
     if(sessionCookie)headers.cookie=sessionCookie;
     // Vercel sets the forwarded address. Do not trust an arbitrary browser ID.

@@ -1,0 +1,1 @@
+ALTER TABLE `lh_kora_premium_orders` ADD `provider` text DEFAULT 'korapay' NOT NULL;

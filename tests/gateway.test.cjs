@@ -90,7 +90,23 @@ test('malformed rewrites cannot select another origin or traverse backend routes
 });
 
 
-test('retired Paystack callbacks are rejected without forwarding',async()=>{const r=await invoke({method:'POST',url:'/api/webhooks/paystack',body:{}});assert.equal(r.statusCode,410);assert.equal(forwarded.length,0);
+test('Paystack callbacks preserve exact raw bytes and signatures and reject oversized payloads',async()=>{
+ const {Readable}=require('node:stream');
+ async function send(raw){const req=Readable.from([Buffer.from(raw)]);Object.assign(req,{method:'POST',url:'/api/gateway?path=webhooks%2Fpaystack',headers:{'x-paystack-signature':'a'.repeat(128)},body:{event:'parsed-body-must-not-be-used'}});return invoke({...req,[Symbol.asyncIterator]:req[Symbol.asyncIterator].bind(req)});}
+ const raw='{ "event": "charge.success",\n "data": {"reference":"LHPR-fixture", "amount":90000} }';
+ assert.equal((await send(raw)).statusCode,200);assert.equal(forwarded[0].url,'https://private-service.example.test/api/webhooks/paystack');assert.equal(forwarded[0].options.body,raw);assert.equal(forwarded[0].options.headers['x-paystack-signature'],'a'.repeat(128));
+ assert.equal((await send('x'.repeat(16001))).statusCode,413);assert.equal(forwarded.length,1);
+ assert.equal((await invoke({method:'POST',url:'/api/webhooks/paystack/other',body:{}})).statusCode,403);
+});
+
+test('only the saved Paystack key reaches private payment and state routes, never browser responses',async()=>{
+ process.env.PAYSTACK_SECRET_KEY='sk_live_private_gateway_fixture';
+ for(const path of ['webhooks/paystack','payments/premium/checkout','payments/premium/verify','hiring/state','hiring/profiles/worker','auth/login','auth/register','config']){
+  const response=await invoke({query:{path},headers:{'x-lochire-paystack-key':'sk_live_attacker'}});assert.equal(response.statusCode,200);assert.equal(forwarded.at(-1).options.headers['x-lochire-paystack-key'],'sk_live_private_gateway_fixture');assert.doesNotMatch(response.body,/sk_live/);
+ }
+ await invoke({query:{path:'auth/forgot'}});assert.equal(forwarded.at(-1).options.headers['x-lochire-paystack-key'],undefined);
+ delete process.env.PAYSTACK_SECRET_KEY;
+ await invoke({query:{path:'config'},headers:{'x-lochire-paystack-key':'sk_live_attacker'}});assert.equal(forwarded.at(-1).options.headers['x-lochire-paystack-key'],undefined);
 });
 test('Kora webhook preserves its raw JSON and signature without an Origin or browser session',async()=>{
  const {Readable}=require('node:stream');const raw='{ "event":"charge.success", "data": { "amount":1000, "reference":"KPY-fixture" } }';

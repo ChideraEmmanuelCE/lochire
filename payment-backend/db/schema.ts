@@ -190,6 +190,7 @@ export const koraTestMemberships=sqliteTable('kora_test_memberships',{
 // Worker premium purchases. Test and live entitlements are separate and every
 // grant is owned by an immutable server-created order, never a browser email.
 export const koraPremiumOrders=sqliteTable('lh_kora_premium_orders',{
+ provider:text('provider').notNull().default('korapay'),
  reference:text('reference').primaryKey(),userId:text('user_id').notNull().references(()=>users.id),mode:text('mode').notNull(),tier:text('tier').notNull(),amount:integer('amount').notNull(),status:text('status').notNull(),claim:text('claim').notNull(),checkoutUrl:text('checkout_url'),createdAt:text('created_at').notNull(),paidAt:text('paid_at'),fees:integer('fees'),applied:integer('applied').notNull().default(0),
 },t=>[uniqueIndex('lh_kora_premium_claim').on(t.userId,t.mode,t.claim),index('lh_kora_premium_user').on(t.userId,t.mode),check('lh_kora_premium_amount',sql`${t.amount}>0`)]);
 export const premiumGrants=sqliteTable('lh_premium_grants',{
