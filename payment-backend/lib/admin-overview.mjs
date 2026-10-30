@@ -28,6 +28,24 @@ export async function adminOverview(db,request){
   const total=(await first(db,'SELECT COUNT(*) AS total'+join+where,...values)).total;
   const pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages);
   const users=await all(db,'SELECT u.id,u.name,u.email,u.role,u.created_at,s.email_verified_at,l.kind AS lock_kind,l.reason AS lock_reason,l.until_at AS lock_until,l.updated_at AS lock_updated_at, (SELECT COUNT(*) FROM live_profiles p WHERE p.user_id=u.id) AS profile_count, (SELECT COUNT(*) FROM live_profiles p WHERE p.user_id=u.id AND p.published=1 AND p.suspended=0) AS public_profile_count'+join+where+' ORDER BY u.created_at DESC,u.id LIMIT ? OFFSET ?',...values,pageSize,(current-1)*pageSize);
+  // One row per registered account, with all of its saved worker/hirer profiles.
+  // The owner sees summaries; public discovery still respects publication and suspension.
+  const profileRows=users.length?await all(db,
+    'SELECT p.user_id,p.role,p.published,p.suspended,p.data FROM live_profiles p WHERE p.user_id IN ('+users.map(()=>'?').join(',')+')',
+    ...users.map(u=>u.id)):[];
+  const profilesByUser=new Map();
+  for(const row of profileRows){
+    const data=JSON.parse(row.data);
+    const summaries=profilesByUser.get(row.user_id)||[];
+    summaries.push({
+      role:row.role,public:row.published===1&&row.suspended===0,
+      occupation:String(data.occupation||data.type||'').slice(0,80),
+      area:String(data.area||'').slice(0,90),city:String(data.city||'').slice(0,70),
+      description:String(row.role==='worker'?(data.experience||data.speciality||''):(data.intro||data.business||'')).slice(0,240),
+    });
+    profilesByUser.set(row.user_id,summaries);
+  }
+  for(const user of users)user.profiles=profilesByUser.get(user.id)||[];
   const byDay=new Map(signups.map(d=>[d.day,d.count]));
   const delivery=(await all(db,'SELECT status,COUNT(*) AS n FROM live_notification_emails GROUP BY status')).reduce((a,r)=>({...a,[r.status]:r.n}),{});
   return {emailAlerts:delivery,generatedAt,timeZone:'Africa/Lagos',counts:{...counts,unverified:counts.accounts-counts.verified,...profileCounts,...workCounts,pendingReports:reportCounts.pending,openings:(await first(db,'SELECT COUNT(*) AS n FROM live_openings')).n},signups:Array.from({length:30},(_,i)=>{const day=dayBack(29-i);return {day,count:byDay.get(day)||0};}),users,pagination:{page:current,pageSize,total,pages},filters:{q,verified}};
