@@ -60,6 +60,7 @@ function openingData(body,employer){
   return o;
 }
 const publicOpening=o=>{const {postcode,...safe}=o;return safe;};
+export const isPremiumOpening=o=>Number(o.max||0)>150000||Number(o.min||0)>150000;
 function distance(a,b){const rad=v=>v*Math.PI/180,h=Math.sin(rad(b.lat-a.lat)/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(rad(b.lon-a.lon)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(Math.max(0,1-h)));}
 
 export async function hiringState(db,user,env,request){
@@ -82,8 +83,9 @@ export async function hiringState(db,user,env,request){
   const participantOpenings=new Set(user?(await all(db,'SELECT opening_id FROM live_engagements WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?)',user.id,user.id)).map(r=>r.opening_id):[]);
   const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN available_live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>{
     const o=publicOpening({...decoded(r),status:r.status});
-    if(env.PAYMENTS_PRODUCT==='legacy'||r.owner_user===user?.id||access.active||participantOpenings.has(r.id))return {...o,locked:false};
-    return {id:o.id,title:o.title,type:o.type,category:o.category,city:o.city,area:o.area,min:o.min,max:o.max,quote:o.quote,basis:o.basis,status:o.status,locked:true};
+    const premium=isPremiumOpening(o);
+    if(!premium||env.PAYMENTS_PRODUCT==='legacy'||r.owner_user===user?.id||access.active||participantOpenings.has(r.id))return {...o,premium,locked:false};
+    return {id:o.id,title:o.title,type:o.type,category:o.category,city:o.city,area:o.area,min:o.min,max:o.max,quote:o.quote,basis:o.basis,status:o.status,premium:true,locked:true};
   });
   let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
@@ -132,7 +134,6 @@ export async function hiringAction({db,user,env,request,body,path}){
 
   }else if(kind==='engagements'&&!parts[2]){
     const role=choose(body.role,['worker','employer'],'role'),mine=await ownProfile(db,user,role);
-    if(role==='worker'&&env.PAYMENTS_PRODUCT!=='legacy'&&!(await premiumAccess(db,user,env)).active)fail(403,'Upgrade to Premium to unlock jobs and express interest. Invitations sent to you remain free to answer.');
     let openingRow;
     if(body.booking){
       if(role!=='employer')fail(403,'Switch to Hiring to request a booking.');
@@ -145,6 +146,7 @@ export async function hiringAction({db,user,env,request,body,path}){
       await run(db,"INSERT OR IGNORE INTO live_openings (id,employer_id,status,data,revision,created_at) VALUES (?,?,'Open',?,1,?)",oid,mine.id,openingRow.data,now());const saved=await first(db,'SELECT employer_id,data FROM live_openings WHERE id=?',oid);if(saved.employer_id!==mine.id||saved.data!==openingRow.data)fail(409,'Request reference already used.');
     }else openingRow=await first(db,'SELECT * FROM live_openings WHERE id=?',text(body.openingId,'opening ID',100));
     if(!openingRow||openingRow.status!=='Open')fail(409,'This opening is unavailable.');
+    if(role==='worker'&&env.PAYMENTS_PRODUCT!=='legacy'&&isPremiumOpening(decoded(openingRow))&&!(await premiumAccess(db,user,env)).active)fail(403,'This job is above ₦150,000 and requires Premium to apply. Jobs up to ₦150,000 are free.');
     const w=role==='worker'?mine:await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='worker' AND published=1 AND suspended=0",body.workerId);
     const e=await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='employer' AND published=1 AND suspended=0",openingRow.employer_id);
     if(!w||!e||w.user_id===e.user_id||role==='employer'&&mine.id!==e.id)fail(403,'Choose an available worker and your own opening.');
