@@ -33,6 +33,7 @@ function harness(){
   for(const f of readdirSync(new URL('../drizzle/',import.meta.url)).filter(x=>x.endsWith('.sql')).sort())
     sqlite.exec(readFileSync(new URL('../drizzle/'+f,import.meta.url),'utf8'));
   const db={prepare(sql){return {bind(...values){return {
+    sql,values,
     first:async()=>sqlite.prepare(sql).get(...values)||null,
     all:async()=>({results:sqlite.prepare(sql).all(...values)}),
     run:async()=>({meta:sqlite.prepare(sql).run(...values)}),
