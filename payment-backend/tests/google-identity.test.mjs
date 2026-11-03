@@ -42,7 +42,7 @@ function harness(){
       sqlite.exec('COMMIT');return result;
     }catch(e){sqlite.exec('ROLLBACK');throw e;}
   }};
-  const env={DB:db,SERVICE_SECRET:'test-service-key',GOOGLE_CLIENT_ID:clientId,APP_ORIGIN:'https://lochire.ng',APP_MODE:'production',PAYMENTS_PRODUCT:'premium',PAYMENT_MODE:'live'};
+  const env={DB:db,SERVICE_SECRET:'test-service-key',GOOGLE_CLIENT_ID:clientId,APP_ORIGIN:'https://lochire.ng',APP_MODE:'production',PAYMENTS_PRODUCT:'legacy',PAYMENT_MODE:'live',WEMA_MODE:'live',WEMA_ENVIRONMENT:'production',WEMA_ENABLED:'false'};
   let count=0;
   async function call(path,body,cookie){
     const r=await handleRequest(new Request('https://private.test/api/'+path,{
