@@ -11,15 +11,16 @@ const encode=value=>Buffer.from(typeof value==='string'?value:JSON.stringify(val
 async function googleFixture(){
   const pair=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
   const publicJwk=await crypto.subtle.exportKey('jwk',pair.publicKey);
+  const kid='fixture-'+crypto.randomUUID().replaceAll('-','');
   const original=globalThis.fetch;
   globalThis.fetch=async url=>{
     assert.equal(String(url),'https://www.googleapis.com/oauth2/v3/certs');
-    return Response.json({keys:[{...publicJwk,alg:'RS256',use:'sig',kid:'lochire-fixture-key'}]},{headers:{'Cache-Control':'public, max-age=300'}});
+    return Response.json({keys:[{...publicJwk,alg:'RS256',use:'sig',kid}]},{headers:{'Cache-Control':'public, max-age=300'}});
   };
   async function token(fields={}){
     const now=Math.floor(Date.now()/1000);
     const claims={iss:'https://accounts.google.com',aud:clientId,iat:now,exp:now+1800,sub:'google-user-123',email:'worker@gmail.com',email_verified:true,name:'Google Worker',...fields};
-    const header=encode({alg:'RS256',typ:'JWT',kid:'lochire-fixture-key'}),payload=encode(claims),data=header+'.'+payload;
+    const header=encode({alg:'RS256',typ:'JWT',kid}),payload=encode(claims),data=header+'.'+payload;
     const sig=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',pair.privateKey,new TextEncoder().encode(data));
     return data+'.'+Buffer.from(sig).toString('base64url');
   }
