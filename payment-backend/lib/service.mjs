@@ -1,5 +1,6 @@
 import {paystackRequestEnvironment} from './premium-paystack.mjs';
 import {validateProfilePhoto} from './profile-photo.mjs';
+import {verifyGoogleIdToken, GoogleIdentityError} from './google-identity.mjs';
 import {activeAccountLock,lockMessage} from './account-locks.mjs';
 import {adultRegistrationError} from './eligibility.mjs';
 import {premiumAction,premiumWebhook,premiumPaystackWebhook,premiumState,premiumReadiness,drainJobAlertOutbox} from './premium.mjs';
@@ -29,6 +30,7 @@ export const digest = async value => hex(await crypto.subtle.digest('SHA-256', e
 const first = (db, sql, ...values) => db.prepare(sql).bind(...values).first();
 const all = async (db, sql, ...values) => (await db.prepare(sql).bind(...values).all()).results;
 const run = (db, sql, ...values) => db.prepare(sql).bind(...values).run();
+const googleClientId = (env, request) => String(env.GOOGLE_CLIENT_ID || request.headers.get('x-lochire-google-client-id') || '').trim();
 const publicUser = u => ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, createdAt: u.created_at });
 export async function passwordHash(password, salt) {
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -347,9 +349,9 @@ async function routeRequest(request,env) {
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
     if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:live(env)?paymentReadiness(env).status:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
     if(live(env)&&env.PAYMENTS_PRODUCT!=='legacy'&&path.startsWith('webhooks/wema/'))fail(410,'This payment integration has been retired.');
-    if(request.method==='GET'&&path==='config'&&live(env)&&env.PAYMENTS_PRODUCT!=='legacy')return send({mode:'live',currency:'NGN',storage:'persistent',payments:premiumReadiness(koraRequestEnvironment(env,request),null),features:{accounts:true,realHiring:true,bankDeposits:false,salaryPayments:false,walletFunding:false,premiumAccess:true,nearbyJobAlerts:true,emailDelivery:emailReady(env)}});
-    if(request.method==='GET'&&path==='config'&&live(env))return send({mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});
-    if(request.method==='GET'&&path==='config')return send({mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
+    if(request.method==='GET'&&path==='config'&&live(env)&&env.PAYMENTS_PRODUCT!=='legacy')return send({googleClientId:googleClientId(env,request)||null,mode:'live',currency:'NGN',storage:'persistent',payments:premiumReadiness(koraRequestEnvironment(env,request),null),features:{accounts:true,realHiring:true,bankDeposits:false,salaryPayments:false,walletFunding:false,premiumAccess:true,nearbyJobAlerts:true,emailDelivery:emailReady(env)}});
+    if(request.method==='GET'&&path==='config'&&live(env))return send({googleClientId:googleClientId(env,request)||null,mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});
+    if(request.method==='GET'&&path==='config')return send({googleClientId:googleClientId(env,request)||null,mode:'sandbox',currency:'TEST-NGN',wema:{...bankReadiness(env),deposits:depositReadiness(env)},features:{accounts:true,persistentHistory:true,reservedPayments:true,verifiedBankPayments:bankReadiness(env).ready,bankDeposits:depositReadiness(env).ready}});
     if(request.method==='GET'&&path==='postcode/config')return send(postcodeReadiness(env));
     if(request.method==='GET'&&path==='webhooks/korapay'){const koraEnv=koraRequestEnvironment(env,request);return send(new URL(request.url).searchParams.get('check')==='connection'?await checkKoraTestConnection(db,koraEnv):koraWebhookStatus(koraEnv));}
     if(!['GET','POST'].includes(request.method))fail(405,'Method not allowed.');
@@ -365,6 +367,53 @@ async function routeRequest(request,env) {
     if(path==='hiring/state'&&request.method==='GET'){let viewer=null;try{viewer=await session(db,request);}catch(error){if(error.status!==401)throw error;}if(viewer){const hirer=await first(db,"SELECT id FROM live_profiles WHERE user_id=? AND role='employer' AND published=1 AND suspended=0",viewer.id);if(hirer)await syncWorkerMatches(db,{employerId:hirer.id});}return send(await hiringState(db,viewer,koraRequestEnvironment(env,request),request));}
     if(['auth/forgot','auth/reset','auth/verify'].includes(path)&&request.method==='POST'){await limit(db,'account:'+ (request.headers.get('x-lochire-client-ip')||'unknown'),10);return send(await accountRoute({db,user:null,env,request,body,path,passwordHash}));}
     if(path.startsWith('webhooks/')&&request.method==='POST')return send(await callback(db,request,body,path,env));
+    if(['auth/google','auth/google/link'].includes(path)&&request.method==='POST') {
+      const clientId=googleClientId(env,request);
+      if(!clientId)fail(503,'Google sign-in has not been configured yet.');
+      await limit(db,'google:'+String(request.headers.get('x-lochire-client-ip')||'unknown'),20);
+      const identity=await verifyGoogleIdToken(body.credential,clientId);
+      const linked=await first(db,'SELECT user_id FROM google_identities WHERE google_sub=?',identity.sub);
+      let user,created=false;
+      if(path==='auth/google/link'){
+        user=await session(db,request);
+        if(identity.email!==user.email.toLowerCase())fail(409,'Choose the Google account with the same email as your LocHire account.');
+        if(linked&&linked.user_id!==user.id)fail(409,'This Google account is connected to another LocHire account.');
+        if(!linked)await run(db,'INSERT INTO google_identities (google_sub,user_id,linked_at) VALUES (?,?,?)',identity.sub,user.id,stamp());
+        await run(db,'INSERT INTO live_account_settings (user_id,email_verified_at) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET email_verified_at=COALESCE(email_verified_at,excluded.email_verified_at)',user.id,stamp());
+        const result=live(env)?await hiringState(db,user,env,request):await summary(db,user,env);
+        return send({...result,googleLinked:true,linked:true});
+      }
+      if(linked){
+        user=await first(db,'SELECT * FROM users WHERE id=?',linked.user_id);
+        if(!user)fail(409,'This Google account needs support to recover its LocHire profile.');
+      } else {
+        const existing=await first(db,'SELECT id FROM users WHERE email=?',identity.email);
+        if(existing)fail(409,'This email already has a LocHire account. Sign in with your password once, then connect Google under My account.');
+        if(!body.profile)return send({needsRegistration:true,name:identity.name,email:identity.email});
+        const profile=body.profile;
+        if(!profile||typeof profile!=='object'||Array.isArray(profile))fail(400,'Complete your LocHire account details.');
+        const ageError=adultRegistrationError(profile.dateOfBirth,profile.adultConsent);
+        if(ageError)fail(400,ageError);
+        if(live(env)?profile.termsConsent!==true:profile.demoConsent!==true)fail(400,live(env)?'Agree to the LocHire terms and privacy notice.':'Confirm that this is a test account.');
+        const name=clean(profile.name||identity.name,'name',70),phone=clean(profile.phone,'phone number',20);
+        if(!/^(\+234|0)\d{10}$/.test(phone))fail(400,'Use a Nigerian number, starting with 0 or +234.');
+        let photo;try{photo=validateProfilePhoto(profile.photo);}catch(error){fail(400,error.message);}
+        const id=uid('LH'),salt=hex(crypto.getRandomValues(new Uint8Array(16))),secret=hex(crypto.getRandomValues(new Uint8Array(32))),hash=await passwordHash(secret,salt),at=stamp();
+        await db.batch([
+          db.prepare("INSERT INTO users (id,email,name,phone,role,password_hash,password_salt,created_at) VALUES (?,?,?,?,'both',?,?,?)").bind(id,identity.email,name,phone,hash,salt,at),
+          db.prepare("INSERT INTO wallets (user_id,available,held,bank_status,active_role) VALUES (?,0,0,'not_connected',?)").bind(id,['worker','employer'].includes(profile.activeRole)?profile.activeRole:'worker'),
+          db.prepare('INSERT INTO google_identities (google_sub,user_id,linked_at) VALUES (?,?,?)').bind(identity.sub,id,at),
+          db.prepare('INSERT INTO live_account_settings (user_id,email_verified_at) VALUES (?,?)').bind(id,at),
+          db.prepare("INSERT INTO account_age_checks(user_id,confirmed_at,minimum_age,method) VALUES(?,?,18,'declared_date_of_birth')").bind(id,at),
+          ...(photo?[db.prepare('INSERT INTO account_photos(user_id,data_uri,updated_at) VALUES(?,?,?)').bind(id,photo,at)]:[]),
+        ]);
+        user=await first(db,'SELECT * FROM users WHERE id=?',id);created=true;
+      }
+      const lock=await activeAccountLock(db,user.id);if(lock)fail(403,lockMessage(lock));
+      const token=await newSession(db,user.id);
+      const result=live(env)?await hiringState(db,user,env,request):await summary(db,user,env);
+      return send({...result,googleLinked:true,created},created?201:200,{'Set-Cookie':sessionCookie(token,env.APP_ORIGIN?.startsWith('https:'))});
+    }
     if(['auth/register','auth/login'].includes(path)&&request.method==='POST') {
       const email=clean(body.email,'email address',254).toLowerCase();
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid email address.');
@@ -445,7 +494,7 @@ async function routeRequest(request,env) {
     fail(404,'Endpoint not found.');
   } catch(error) {
     // Never return bank responses, secrets, passwords, NIN, OTP or database errors.
-    response=send({error:error instanceof KoraError||error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof KoraError||error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
+    response=send({error:error instanceof GoogleIdentityError||error instanceof KoraError||error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.message:'The service could not complete this request. Refresh and try again.'},error instanceof KoraError||error instanceof PaystackError||error instanceof ApiError||error instanceof HiringError||error instanceof PostcodeError||error instanceof DepositError||error instanceof DemoBankError?error.status:500);
   }
   return response;
 }
