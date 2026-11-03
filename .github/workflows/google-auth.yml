@@ -1,0 +1,33 @@
+name: LocHire Google authentication checks
+
+on:
+  push:
+    branches: [feature/google-sign-in]
+  pull_request:
+    paths:
+      - 'app.js'
+      - 'api/**'
+      - 'payment-backend/lib/**'
+      - 'payment-backend/db/**'
+      - 'payment-backend/drizzle/**'
+      - 'payment-backend/tests/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install frontend test dependencies
+        run: npm ci
+      - name: Check and build frontend
+        run: npm run build
+      - name: Run frontend integration tests
+        run: npm test
+      - name: Run private backend unit and integration tests
+        run: node --test payment-backend/tests/*.test.mjs
