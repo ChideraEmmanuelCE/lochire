@@ -62,8 +62,9 @@ test('Google-signed ID token is checked for signature, audience, issuer and expi
     const profile=await verifyGoogleIdToken(valid,clientId);
     assert.deepEqual(profile,{sub:'google-user-123',email:'worker@gmail.com',name:'Google Worker'});
     await assert.rejects(()=>verifyGoogleIdToken(valid,'wrong-client.apps.googleusercontent.com'),GoogleIdentityError);
-    await assert.rejects(()=>verifyGoogleIdToken(await g.token({exp:1}),clientId),GoogleIdentityError);
-    await assert.rejects(()=>verifyGoogleIdToken(await g.token({email_verified:false}),clientId),GoogleIdentityError);
+    const expired=await g.token({exp:1}),unverified=await g.token({email_verified:false});
+    await assert.rejects(()=>verifyGoogleIdToken(expired,clientId),GoogleIdentityError);
+    await assert.rejects(()=>verifyGoogleIdToken(unverified,clientId),GoogleIdentityError);
     await assert.rejects(()=>verifyGoogleIdToken(valid.slice(0,-3)+'abc',clientId),GoogleIdentityError);
   }finally{g.restore();}
 });
