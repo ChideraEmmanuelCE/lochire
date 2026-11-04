@@ -38,3 +38,33 @@ body{font-size:17px;line-height:1.65}.header-inner{max-width:1160px}.brand-logo{
 .google-auth-row>div{max-width:100%}
 .auth-divider{text-align:center;margin:12px 0 18px;font-size:13px;color:var(--muted)}
 #google-link{justify-content:flex-start;margin-top:14px}
+
+/* Marketplace reading order and touch layouts */
+.reading-layout.profile-columns {gap:16px;align-items:stretch}
+.reading-layout.profile-columns>aside {order:initial;min-width:0}
+.reading-layout .panel {margin:0 0 14px;overflow-wrap:anywhere}
+.reading-layout .detail-grid {gap:0;margin:12px 0 0}
+.reading-layout .detail-grid>div {padding:10px 0;border-top:1px solid var(--line)}
+.reading-layout .detail-grid dt {font-size:.82rem;font-weight:650}
+.reading-layout .detail-grid dd {line-height:1.45}
+.section-label {display:block;color:var(--muted);font-size:.75rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.back-link {min-height:44px;color:var(--green);font-weight:650;padding:4px 0}
+.job-summary,.person-summary {border:1px solid var(--line);border-radius:20px;background:var(--surface);padding:clamp(18px,3vw,30px);margin:0 0 16px}
+.job-summary {border-top:4px solid var(--green)}
+.job-summary h1,.person-summary h1 {margin:5px 0;line-height:1.12;overflow-wrap:anywhere}
+.tag-line,.job-place,.hirer-summary,.person-summary {display:flex;align-items:center;gap:10px}
+.tag-line {flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.job-place {font-size:.94rem;margin:0}.job-place .icon {width:17px}
+.job-pay {margin:16px 0;padding:12px 0;border-block:1px solid var(--line)}
+.job-pay strong {font-size:clamp(18px,2.5vw,23px)}
+.hirer-summary {margin:8px 0 12px}.hirer-summary h2,.person-summary p {margin:0}
+.person-summary .avatar,.hirer-summary .avatar {display:grid;place-items:center}
+.quiet-actions {display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 16px}
+.quiet-actions .button {box-shadow:none;min-height:44px;background:transparent;font-size:.875rem}
+.page-top+.empty {border:1px solid var(--line);border-radius:18px;background:var(--surface);text-align:start;padding:20px;max-width:680px}
+.page-top+.empty .empty-icon {width:42px;height:42px;border-radius:12px;margin:0 0 12px}
+.page-top+.empty h3 {font-size:1.25rem;margin:0 0 6px}
+.page-top+.empty p {margin:0 0 12px;max-width:45ch;font-size:.95rem}
+.page-top+.empty .button {margin:0}
+@media(max-width:899px){.reading-layout.profile-columns{display:flex;flex-direction:column;gap:0}.reading-layout .detail-grid{grid-template-columns:1fr}.job-summary .row-actions .primary{flex:1}.job-summary .row-actions{margin:0}.page-top{margin-bottom:16px}}
+@media(min-width:900px){.reading-layout .detail-grid{column-gap:20px}}
