@@ -24,7 +24,7 @@ async function googleFixture(){
     const sig=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',pair.privateKey,new TextEncoder().encode(data));
     return data+'.'+Buffer.from(sig).toString('base64url');
   }
-  return {token,restore(){globalThis.fetch=original;}};
+  return {token,publicKeys:JSON.stringify([{...publicJwk,kid,alg:'RS256',use:'sig'}]),restore(){globalThis.fetch=original;}};
 }
 
 function harness(){
@@ -114,4 +114,15 @@ test('Existing password account requires authenticated, matching-email Google li
     assert.equal(r.data.user.id,id);
     assert.equal(h.sqlite.prepare('SELECT COUNT(*) AS total FROM users').get().total,1);
   }finally{g.restore();}
+});
+
+test('gateway keys verify the signature when Sites cannot fetch Google certificates',async()=>{
+  const g=await googleFixture();
+  try {
+    globalThis.fetch=async()=>{throw Error('unreachable');};
+    const token=await g.token();
+    assert.equal((await verifyGoogleIdToken(token,clientId,g.publicKeys)).sub,'google-user-123');
+    await assert.rejects(()=>verifyGoogleIdToken(token.slice(0,token.lastIndexOf('.')+1)+'AA',clientId,g.publicKeys),GoogleIdentityError);
+    await assert.rejects(()=>verifyGoogleIdToken(token,'wrong-audience',g.publicKeys),GoogleIdentityError);
+  } finally {g.restore();}
 });

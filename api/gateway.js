@@ -1,5 +1,27 @@
 'use strict';
 
+let googleKeys;
+let googleKeysExpireAt = 0;
+
+async function googleSigningKeys() {
+  if (googleKeys && Date.now() < googleKeysExpireAt) return googleKeys;
+  const response = await fetch('https://www.googleapis.com/oauth2/v3/certs', {
+    redirect: 'error', signal: AbortSignal.timeout(5000)
+  });
+  if (!response.ok) throw Error('Key service unavailable');
+  const {keys} = await response.json();
+  if (!Array.isArray(keys)) throw Error('Invalid key response');
+  const publicKeys = keys.filter(k => k.kty === 'RSA' && k.use === 'sig' && k.alg === 'RS256')
+    .map(({kid,kty,use,alg,n,e}) => ({kid,kty,use,alg,n,e}));
+  const encoded = JSON.stringify(publicKeys);
+  if (!publicKeys.length || encoded.length > 12000) throw Error('Invalid key set');
+  const ttl = Number(response.headers.get('cache-control')?.match(/max-age=(\d+)/i)?.[1] || 0);
+  const age = Number(response.headers.get('age') || 0);
+  googleKeysExpireAt = Date.now() + 1000 * Math.max(0, Math.min(ttl - age, 300));
+  googleKeys = encoded;
+  return encoded;
+}
+
 // Same-origin gateway: private service credentials never reach the browser.
 module.exports = async function handler(req,res) {
   res.setHeader('Cache-Control','no-store');
@@ -78,6 +100,11 @@ module.exports = async function handler(req,res) {
       else if(req.body&&typeof req.body==='object')body=JSON.stringify(req.body);
       else {const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>16000)return res.status(413).json({error:'Request too large.'});chunks.push(chunk);}body=Buffer.concat(chunks).toString('utf8');}
       if(Buffer.byteLength(body)>16000)return res.status(413).json({error:'Request too large.'});
+    }
+    if (req.method === 'POST' && ['/api/auth/google','/api/auth/google/link'].includes(url.pathname)) {
+      // Never forward client-supplied key material. Only Google supplies these keys.
+      try { headers['x-lochire-google-jwks'] = await googleSigningKeys(); }
+      catch { /* The backend can still try its direct Google key source. */ }
     }
     const endpoint=new URL(base);
     if(endpoint.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(endpoint.hostname))throw Error('Invalid backend origin');

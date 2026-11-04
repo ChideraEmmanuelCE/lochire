@@ -371,7 +371,7 @@ async function routeRequest(request,env) {
       const clientId=googleClientId(env,request);
       if(!clientId)fail(503,'Google sign-in has not been configured yet.');
       await limit(db,'google:'+String(request.headers.get('x-lochire-client-ip')||'unknown'),20);
-      const identity=await verifyGoogleIdToken(body.credential,clientId);
+      const identity=await verifyGoogleIdToken(body.credential,clientId,request.headers.get('x-lochire-google-jwks'));
       const linked=await first(db,'SELECT user_id FROM google_identities WHERE google_sub=?',identity.sub);
       let user,created=false;
       if(path==='auth/google/link'){

@@ -32,16 +32,23 @@ async function keys(force=false) {
   return cachedKeys;
 }
 
-export async function verifyGoogleIdToken(credential, clientId) {
+export async function verifyGoogleIdToken(credential, clientId, gatewayKeys = null) {
   if (!clientId || typeof credential !== 'string' || credential.length > 8192) invalid();
   const parts = credential.split('.');
   if (parts.length !== 3) invalid();
   const header = jsonPart(parts[0]), claims = jsonPart(parts[1]);
   if (header?.alg !== 'RS256' || typeof header.kid !== 'string' ||
       !/^[A-Za-z0-9_-]{1,128}$/.test(header.kid)) invalid();
-  let candidates = await keys();
-  let jwk = candidates.find(k => k.kid === header.kid);
-  if (!jwk) { candidates = await keys(true); jwk = candidates.find(k => k.kid === header.kid); }
+  let jwk;
+  if (gatewayKeys !== null) {
+    // routeRequest has already authenticated the gateway using SERVICE_SECRET.
+    const candidates = JSON.parse(gatewayKeys);
+    if (!Array.isArray(candidates)) invalid();
+    jwk = candidates.find(k => k.kid === header.kid && k.kty === 'RSA' && k.use === 'sig' && k.alg === 'RS256');
+  } else {
+    jwk = (await keys()).find(k => k.kid === header.kid);
+    if (!jwk) jwk = (await keys(true)).find(k => k.kid === header.kid);
+  }
   if (!jwk) invalid();
   let verified = false;
   try {
