@@ -82,7 +82,7 @@ function renderGoogleButton(id){
     if(!target.isConnected)return;
     window.google.accounts.id.initialize({client_id:config.googleClientId,callback:googleCallback,ux_mode:'popup',auto_select:false});
     target.replaceChildren();
-    window.google.accounts.id.renderButton(target,{type:'standard',theme:'outline',size:'large',shape:'rectangular',text:'continue_with',logo_alignment:'left',width:260});
+    window.google.accounts.id.renderButton(target,{type:'standard',theme:'outline',size:'large',shape:'rectangular',text:'continue_with',logo_alignment:'left',width:Math.min(360,Math.floor(target.getBoundingClientRect().width)||260)});
   }).catch(e=>{if(target.isConnected)target.textContent=e.message+' Use email sign-in instead.';});
 }
 async function finishGoogleLogin(result){
