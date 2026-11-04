@@ -49,7 +49,7 @@ function mainMenu(){modal('Your menu','Choose what you want to do.',`<div class=
 function restoreDisclosures(){main.querySelectorAll('[data-disclosure]').forEach(d=>{const key=page+'/'+routeId+'/'+d.dataset.disclosure;if(disclosures.has(key))d.open=disclosures.get(key);});}
 
 function go(p,id=''){if(dialog.open)dialog.close();page=p;routeId=id;const hash=p+(id?'/'+encodeURIComponent(id):'');if(location.hash.slice(1)!==hash)location.hash=hash;render();window.scrollTo({top:0,behavior:'instant'});main.focus({preventScroll:true});}
-function modal(title,description,body){document.querySelector('#dialog-content').innerHTML=`<div class="modal-head"><h2 id="modal-title">${esc(title)}</h2><button class="icon-button" type="button" data-action="close" aria-label="Close">${icon('close')}</button></div><p class="modal-desc">${esc(description)}</p>${body}`;if(!dialog.open)dialog.showModal();}
+function modal(title,description,body){dialog.classList.remove('auth-dialog');document.querySelector('#dialog-content').innerHTML=`<div class="modal-head"><h2 id="modal-title">${esc(title)}</h2><button class="icon-button" type="button" data-action="close" aria-label="Close">${icon('close')}</button></div><p class="modal-desc">${esc(description)}</p>${body}`;if(!dialog.open)dialog.showModal();}
 function requireAccount(next){if(state.user){if(state.verificationRequired){verificationNext=next;go('check-email');return false;}return true;}pending=next;auth();return false;}
 function requireProfile(next){if(!requireAccount(next))return false;if(own())return true;toast('Create your '+role+' profile first.');go('edit-profile');return false;}
 const avatar=p=>{const photo=typeof p?.photo==='string'&&/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p.photo)&&p.photo.length<5000?p.photo:null;return `<span class="avatar">${photo?`<img src="${esc(photo)}" alt="${esc(p.name||'Profile')} profile photo" width="128" height="128" loading="lazy" decoding="async">`:esc((p?.name||'?').split(' ').map(x=>x[0]).slice(0,2).join(''))}</span>`;};
@@ -61,8 +61,143 @@ document.addEventListener('change',async event=>{
  catch(e){if(generation===photoGeneration&&picker.isConnected)status.textContent=e.message;}
  finally{if(generation===photoGeneration){delete picker.dataset.processing;input.value='';}}
 });
-function auth(mode='login'){authMode=mode;const create=mode==='register',forgot=mode==='forgot';modal(create?'Create your LocHire account':forgot?'Reset your password':'Welcome back',create?'You must be 18 or older. Use one account to find work or hire.':forgot?'Request a password reset email.':'Sign in to continue your hiring and conversations.',`<form id="auth-form">${create?photoPicker()+field('name','Your name','','text','required maxlength="70" autocomplete="name"')+field('dateOfBirth','When were you born?','','date',`required min="1900-01-01" max="${D.adultBirthCutoff()}" autocomplete="bday" aria-describedby="age-help"`)+`<p id="age-help" class="caption age-note">LocHire is for people aged 18 and above. Your birth date is used for this check and is not shown on your profile.</p>`+field('phone','Nigerian phone number','','tel','required pattern="(0|\\+234)[0-9]{10}" autocomplete="tel"'):''}${field('email','Email address',forgot?state.user?.email||'':'','email','required maxlength="254" autocomplete="email"')}${!forgot?field('password',create?'Password (at least 10 characters)':'Password','','password',`required minlength="10" maxlength="200" autocomplete="${create?'new-password':'current-password'}"`):''}${create?check('adultConsent','I confirm that I am 18 or older.')+check('termsConsent','I agree to the <a href="#guidelines" target="_blank" rel="noopener">terms</a> and <a href="#privacy" target="_blank" rel="noopener">privacy notice</a>.'):''}${errorBox()}<p id="auth-status" class="form-status" role="status" hidden></p><button type="submit" class="button primary">${create?'Create account':forgot?'Request reset email':'Sign in'}</button><div class="auth-links">${btn(create?'I already have an account':'Create account',create?'auth-login':'auth-register')}${!forgot?btn('Forgot password?','auth-forgot'):btn('Back to sign in','auth-login')}</div></form>`);}
-function render(){navigation();if(loading){main.innerHTML=empty('Loading LocHire','Connecting to saved profiles and openings.');return;}const pages={'join-worker':()=>joinPage('worker'),'join-hirer':()=>joinPage('employer'),password:passwordPage,'check-email':checkEmailPage,'email-verified':emailVerifiedPage,settings:settingsPage,home,discover,available:availablePage,profile:profilePage,'edit-profile':profileForm,openings:openingsPage,'edit-opening':openingForm,person:personPage,worker:personPage,employer:personPage,opening:openingPage,engagements:engagementsPage,record:recordPage,notifications:notificationsPage,messages:notificationsPage,wallet:walletPage,account:accountPage,help:helpPage,privacy:privacyPage,guidelines:termsPage,admin:adminPage,finance:financePage,premium:premiumPage,reset:resetPage,verify:verifyPage};if(state.verificationRequired&&['edit-profile','edit-opening'].includes(page)){checkEmailPage();}else (pages[page]||home)();restoreDisclosures();if(page==='record')setTimeout(viewVisibleMessages,0);}
+let googleScriptPromise=null,googleSignupToken='';
+function loadGoogleIdentity(){
+  if(window.google?.accounts?.id)return Promise.resolve();
+  if(googleScriptPromise)return googleScriptPromise;
+  googleScriptPromise=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src='https://accounts.google.com/gsi/client';
+    script.async=true;
+    script.onload=()=>window.google?.accounts?.id?resolve():reject(Error('Google sign-in could not load.'));
+    script.onerror=()=>reject(Error('Google sign-in could not load.'));
+    document.head.appendChild(script);
+  }).catch(e=>{googleScriptPromise=null;throw e;});
+  return googleScriptPromise;
+}
+function renderGoogleButton(id){
+  const target=document.getElementById(id);
+  if(!target||!config.googleClientId)return;
+  loadGoogleIdentity().then(()=>{
+    if(!target.isConnected)return;
+    window.google.accounts.id.initialize({client_id:config.googleClientId,callback:googleCallback,ux_mode:'popup',auto_select:false});
+    target.replaceChildren();
+    window.google.accounts.id.renderButton(target,{type:'standard',theme:'outline',size:'large',shape:'rectangular',text:'continue_with',logo_alignment:'left',width:Math.min(360,Math.floor(target.getBoundingClientRect().width)||260)});
+  }).catch(e=>{if(target.isConnected)target.textContent=e.message+' Use email sign-in instead.';});
+}
+async function finishGoogleLogin(result){
+  authTransition=true;authEpoch++;stateEpoch++;
+  try{
+    adoptState(result,!pending);
+    if(pending&&state.user.activeRole!==role){await api('wallet/role',{role});state.user.activeRole=role;}
+    clearDiscoveryFilters();
+  }finally{authTransition=false;googleSignupToken='';}
+  if(dialog.open)dialog.close();
+  const next=pending;pending=null;
+  if(state.verificationRequired){verificationNext=next;go('check-email');}
+  else if(next)next();
+  else go('profile');
+  toast(result.created?'Account created with Google.':'Signed in with Google.');
+}
+function completeGoogleRegistration(data){
+  modal('Finish setting up LocHire','Signed in with '+data.email+'. Add your details once to create your account.',
+    '<form id="google-register-form">'
+    +photoPicker()
+    +field('name','Your name',data.name||'','text','required maxlength="70" autocomplete="name"')
+    +field('dateOfBirth','When were you born?','','date','required min="1900-01-01" max="'+D.adultBirthCutoff()+'" autocomplete="bday"')
+    +'<p class="caption age-note">LocHire is for adults aged 18 and over. Your birth date is not public.</p>'
+    +field('phone','Nigerian phone number','','tel','required pattern="(0|\\+234)[0-9]{10}" autocomplete="tel"')
+    +check('adultConsent','I confirm I am 18 or older.')
+    +check('termsConsent','I agree to the <a href="#guidelines" target="_blank" rel="noopener">terms</a> and <a href="#privacy" target="_blank" rel="noopener">privacy notice</a>.')
+    +errorBox()
+    +'<button type="submit" class="button primary">Create my LocHire account</button>'
+    +'</form>');
+}
+async function googleCallback(result){
+  if(typeof result?.credential!=='string')return;
+  try{
+    if(state.user){
+      const linked=await api('auth/google/link',{credential:result.credential});
+      adoptState(linked,true);render();toast('Google is connected. You can use it to sign in next time.');
+      return;
+    }
+    const data=await api('auth/google',{credential:result.credential});
+    if(data.needsRegistration){googleSignupToken=result.credential;completeGoogleRegistration(data);return;}
+    await finishGoogleLogin(data);
+  }catch(e){formError(e.message);}
+}
+function auth(mode='login'){
+  authMode=mode;
+  const create=mode==='register',forgot=mode==='forgot';
+  const title=create?'Make your next move.':forgot?'Reset your password.':'Welcome back.';
+  const description=create?'Create one account to find work, hire help, and connect with people nearby.':forgot?'Enter the email linked to your account and we’ll send you a reset link.':'Sign in to pick up where you left off.';
+  const passwordField=`<div class="auth-password-wrap">${field('password',create?'Create a password':'Password','','password',`required minlength="10" maxlength="200" autocomplete="${create?'new-password':'current-password'}" placeholder="${create?'At least 10 characters':'Enter your password'}"`)}<button class="auth-password-eye" type="button" data-action="toggle-password" aria-label="Show password" aria-pressed="false">Show</button></div>`;
+  const emailField=field('email','Email address',forgot?state.user?.email||'':'','email','required maxlength="254" autocomplete="email" placeholder="you@example.com"');
+  const signupFields=`
+    ${field('name','Full name','','text','required maxlength="70" autocomplete="name" placeholder="Your full name"')}
+    ${emailField}
+    ${passwordField}
+    <div class="auth-two-col">
+      ${field('dateOfBirth','Date of birth','','date',`required min="1900-01-01" max="${D.adultBirthCutoff()}" autocomplete="bday" aria-describedby="age-help"`)}
+      ${field('phone','Phone number','','tel','required pattern="(0|\\+234)[0-9]{10}" autocomplete="tel" placeholder="080 0000 0000"')}
+    </div>
+    <p id="age-help" class="auth-age-note">For ages 18 and above. Your date of birth is kept private.</p>
+    <details class="auth-photo-details"><summary>Add a profile photo <span class="auth-optional">(optional)</span></summary>${photoPicker()}</details>
+    ${check('adultConsent','I confirm I am 18 or older.')}
+    ${check('termsConsent','I agree to the <a href="#guidelines" target="_blank" rel="noopener">terms</a> and <a href="#privacy" target="_blank" rel="noopener">privacy notice</a>.')}`;
+  const otherFields=forgot?emailField:`
+    ${emailField}
+    ${passwordField}
+    <div class="auth-forgot-row"><button type="button" data-action="auth-forgot">Forgot password?</button></div>`;
+  dialog.classList.add('auth-dialog');
+  document.querySelector('#dialog-content').innerHTML=`
+    <div class="auth-layout">
+      <aside class="auth-story" aria-label="About LocHire">
+        <div class="auth-story-mark"><img src="/assets/lochire-symbol.jpg" alt="" width="43" height="43"> LocHire</div>
+        <div class="auth-story-content">
+          <span class="auth-story-kicker">A world of work, closer</span>
+          <h3>Good people.<br>Great <span>possibilities.</span></h3>
+          <p class="auth-story-copy">Find the help you need, share what you do best, and build lasting connections in your community.</p>
+          <div class="auth-art" aria-hidden="true">
+            <div class="auth-art-ring"></div>
+            <div class="auth-art-core"><img src="/assets/lochire-symbol.jpg" alt=""></div>
+            <div class="auth-art-note first">${icon('work')} Find your next job</div>
+            <div class="auth-art-note second">${icon('people')} Hire local talent</div>
+          </div>
+        </div>
+        <div class="auth-story-footer">${icon('pin')} Local opportunities, real connections</div>
+      </aside>
+      <section class="auth-pane" aria-labelledby="modal-title">
+        <div class="auth-pane-top">
+          <span class="auth-mini-brand"><img src="/assets/lochire-symbol.jpg" alt="" width="31" height="31"> LocHire</span>
+          <button type="button" class="auth-close" data-action="close" aria-label="Close sign-in dialog">${icon('close')}</button>
+        </div>
+        ${forgot?'':`<div class="auth-segments" role="group" aria-label="Sign in or create account">
+          <button type="button" data-action="auth-login" aria-pressed="${!create}">Sign in</button>
+          <button type="button" data-action="auth-register" aria-pressed="${create}">Sign up</button>
+        </div>`}
+        <div class="auth-heading">
+          <p class="auth-eyebrow">${create?'Get started for free':forgot?'Account recovery':'Your community awaits'}</p>
+          <h2 id="modal-title">${title}</h2>
+          <p>${description}</p>
+        </div>
+        ${!forgot&&config.googleClientId?'<div class="auth-google"><div class="google-auth-row"><div id="google-signin"></div></div><div class="auth-divider">Or continue with email</div></div>':''}
+        <form id="auth-form" class="auth-form">
+          ${create?signupFields:otherFields}
+          ${errorBox()}
+          <p id="auth-status" class="form-status" role="status" hidden></p>
+          <button type="submit" class="auth-submit">${create?'Create my account':forgot?'Send reset link':'Sign in to LocHire'}</button>
+          <div class="auth-links"><span>${create?'Already have an account?':forgot?'Remember your password?':'New to LocHire?'}</span>
+            <button type="button" data-action="${create||forgot?'auth-login':'auth-register'}">${create||forgot?'Sign in':'Create an account'}</button>
+          </div>
+        </form>
+        <p class="auth-footnote">${icon('shield')} Your details are handled securely</p>
+      </section>
+    </div>`;
+  if(!dialog.open)dialog.showModal();
+  renderGoogleButton('google-signin');
+}
+function render(){navigation();if(loading){main.innerHTML=empty('Loading LocHire','Connecting to saved profiles and openings.');return;}const pages={'join-worker':()=>joinPage('worker'),'join-hirer':()=>joinPage('employer'),password:passwordPage,'check-email':checkEmailPage,'email-verified':emailVerifiedPage,settings:settingsPage,home,discover,available:availablePage,profile:profilePage,'edit-profile':profileForm,openings:openingsPage,'edit-opening':openingForm,person:personPage,worker:personPage,employer:personPage,opening:openingPage,engagements:engagementsPage,record:recordPage,notifications:notificationsPage,messages:notificationsPage,wallet:walletPage,account:accountPage,help:helpPage,privacy:privacyPage,guidelines:termsPage,admin:adminPage,finance:financePage,premium:premiumPage,reset:resetPage,verify:verifyPage};if(state.verificationRequired&&['edit-profile','edit-opening'].includes(page)){checkEmailPage();}else (pages[page]||home)();restoreDisclosures();if(page==='account')renderGoogleButton('google-link');if(page==='record')setTimeout(viewVisibleMessages,0);}
 function joinPage(target){const worker=target==='worker';main.innerHTML=head(worker?'Find work near you.':'Find local help.','Join LocHire in three simple steps.')+`<section class="panel"><h2>${worker?'Let local hirers discover your skills.':'Find the right person for your work.'}</h2><ol><li>Create an account and verify your email.</li><li>${worker?'Publish your skills, area, availability and expected pay.':'Create your hirer profile and post a genuine job or task.'}</li><li>${worker?'Apply for jobs or respond to invitations, then agree the work and pay.':'Invite a worker and agree the scope, schedule and pay together.'}</li></ol><p>${worker?'Work earnings go to your connected bank when online payments are activated. You can also agree cash or a direct bank transfer.':'You can agree cash or a direct bank transfer while online payments await activation.'}</p><div class="row-actions">${btn(worker?'Create a worker profile':'Create a hirer profile',worker?'be-worker':'be-employer',true)}${state.user?'':btn('Already have an account? Sign in','auth-login')}</div><p class="caption">LocHire connects people; profiles are self-reported and work is not guaranteed. Review the person and work details before accepting.</p></section>`;}
 async function shareJoin(target){const url=new URL('/#join-'+target,location.origin).href;const text=target==='worker'?'Find local work with LocHire. Publish your skills, area and availability.':'Find local workers with LocHire. Post your job or task and agree work directly.';if(navigator.share){try{await navigator.share({title:'LocHire',text,url});return;}catch(e){if(e.name==='AbortError')return;}}if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(text+' '+url);toast('Invitation link copied.');return;}catch{}}modal('Invite someone to LocHire','Copy this link and send it to someone who wants to join.',`<p>${esc(text)}</p><p><a href="${esc(url)}">${esc(url)}</a></p>`);}
 function home(){const p=own(),name=state.user?.name?.split(' ')[0];main.innerHTML=`<section class="hero simple-hero"><div class="hero-intro"><span class="hero-tag">${icon('pin')} Work and help, close to you</span>${name?`<p class="welcome-line">Welcome, ${esc(name)}.</p>`:''}<h1>Find local workers.<br><span>Find work near you.</span></h1><p>Good work starts with the right person.<br>What would you like to do?</p><div class="hero-actions role-choices"><button type="button" class="role-choice find-choice" data-action="find-work"><span class="choice-icon">${icon('work')}</span><span><strong>I need a job</strong><small>See jobs and get hired</small></span>${icon('arrow')}</button><button type="button" class="role-choice hire-choice" data-action="hire"><span class="choice-icon">${icon('people')}</span><span><strong>I want to hire</strong><small>Find someone to help you</small></span>${icon('arrow')}</button></div><p class="hero-assurance">${icon('shield')} For adults 18 and above · Your details stay in your account</p></div></section><section class="profile-nudge"><span class="nudge-icon">${icon('user')}</span><div><strong>${p?'Your profile is saved':'Let people know what you do'}</strong><p>${p?'Keep it up to date so people can find you.':'Add your skills and area. Hirers can see your profile for free.'}</p></div>${btn(p?'My profile':'Create my profile',p?'profile':'edit-profile',true)}</section>${role==='employer'&&state.employer?radarBanner():''}<section class="home-guide"><div class="section-heading"><h2>How it works</h2><span class="caption">3 easy steps</span></div><ol class="how-it-works"><li><strong>Find a person or job</strong><span>Choose what you need nearby.</span></li><li><strong>Talk and agree</strong><span>Agree the pay, start and end date.</span></li><li><strong>Finish and leave a review</strong><span>Reviews open after the job ends.</span></li></ol></section>${disclosure('home-more','What kind of help?',`<div class="home-categories">${D.categories.map(c=>`<button data-action="category" data-value="${esc(c)}">${icon('work')}${esc(c)}</button>`).join('')}</div><div class="row-actions">${btn('Create worker profile','be-worker')}${btn('Create hirer profile','be-employer')}</div>`,'Cleaning, cooking, repairs and more')}`;}
@@ -166,7 +301,7 @@ async function financePage(){
 }
 function checkoutRedirect(r){if(!r.checkoutUrl){toast(r.message||'Your purchase is saved. Use Check payment before starting another.');return false;}const url=new URL(r.checkoutUrl);if(url.protocol!=='https:'||url.hostname!=='checkout.paystack.com'||url.username||url.password||url.port)throw Error('Checkout could not be validated.');window.location.assign(url.href);return true;}
 
-function accountPage(){main.innerHTML=head('Your account.','Your sign-in, security and private details.')+(state.user?`<section class="account-summary">${avatar(state.user)}<div><strong>${esc(state.user.name)}</strong><p>${esc(state.user.email)}</p></div></section><section class="panel"><h2>Your profile photo</h2><form id="account-photo-form">${photoPicker(state.user.photo)}${errorBox()}<button type="submit" class="button primary">Save photo</button></form></section><section class="panel verification-card">${badge(state.user.emailVerified?'Email verified':'Email not verified')}<p>${state.user.emailVerified?'Your account email has been confirmed.':state.emailReady?'Verify your email to finish your profile and arrange work.':'Email verification is awaiting activation. Your account is saved.'}</p>${!state.user.emailVerified?btn('Verify email','check-email',true):''}</section><div class="settings-menu">${menuRow('Password & security','password','shield','Change password or send a reset link')}${menuRow('Appearance & preferences','settings','settings')}</div>${disclosure('account-details','Your private details',detail([['Name',state.user.name],['Email',state.user.email],['Phone',state.user.phone]]),'Contact information')}<div class="row-actions">${btn('Sign out','logout')}</div>`:empty('Welcome to LocHire.','Use your account on any device.',btn('Sign in','auth-login',true)+btn('Create account','auth-register')+btn('Forgot password?','auth-forgot')))+`<div class="settings-menu">${menuRow('Help & support','help','mail')}${menuRow('Privacy','privacy','shield')}</div>`;}
+function accountPage(){main.innerHTML=head('Your account.','Your sign-in, security and private details.')+(state.user?`<section class="account-summary">${avatar(state.user)}<div><strong>${esc(state.user.name)}</strong><p>${esc(state.user.email)}</p></div></section><section class="panel"><h2>Your profile photo</h2><form id="account-photo-form">${photoPicker(state.user.photo)}${errorBox()}<button type="submit" class="button primary">Save photo</button></form></section><section class="panel verification-card">${badge(state.user.emailVerified?'Email verified':'Email not verified')}<p>${state.user.emailVerified?'Your account email has been confirmed.':state.emailReady?'Verify your email to finish your profile and arrange work.':'Email verification is awaiting activation. Your account is saved.'}</p>${!state.user.emailVerified?btn('Verify email','check-email',true):''}</section>${config.googleClientId?`<section class="panel"><h2>Google sign-in</h2><p>${state.user.googleLinked?'Your Google account is connected. You can sign in without a LocHire password.':'Connect the Google account using this same email once. Your existing profiles and messages will be preserved.'}</p>${state.user.googleLinked?'':`<div id="google-link" class="google-auth-row"></div>`}</section>`:''}<div class="settings-menu">${menuRow('Password & security','password','shield','Change password or send a reset link')}${menuRow('Appearance & preferences','settings','settings')}</div>${disclosure('account-details','Your private details',detail([['Name',state.user.name],['Email',state.user.email],['Phone',state.user.phone]]),'Contact information')}<div class="row-actions">${btn('Sign out','logout')}</div>`:empty('Welcome to LocHire.','Use your account on any device.',btn('Sign in','auth-login',true)+btn('Create account','auth-register')+btn('Forgot password?','auth-forgot')))+`<div class="settings-menu">${menuRow('Help & support','help','mail')}${menuRow('Privacy','privacy','shield')}</div>`;}
 function passwordPage(){main.innerHTML=head('Password & security.','Keep your account secure.')+(state.user?`<form id="password-form" class="panel live-form"><h2>Change your password</h2><p>Use your current password to choose a new one.</p>${field('currentPassword','Current password','','password','required minlength="10" maxlength="200" autocomplete="current-password"')}${field('password','New password','','password','required minlength="10" maxlength="200" autocomplete="new-password"')}${field('confirmPassword','Confirm new password','','password','required minlength="10" maxlength="200" autocomplete="new-password"')}${errorBox()}<button type="submit" class="button primary">Change password</button><p class="caption">You will be signed out on all devices.</p></form>`:'')+`<section class="panel"><h2>Forgot your password?</h2><p>Request a secure link at your account email address. You do not need your current password.</p>${btn('Send a reset email','auth-forgot',!state.user)}${!state.emailReady?'<p class="caption">Email sending is awaiting activation.</p>':''}</section><div class="row-actions">${btn('Back to account','account')}</div>`;}
 function checkEmailPage(){if(!state.user){main.innerHTML=head('Verify your email.','Sign in to request a new verification email.')+empty('Your account email stays private.','Use the account you want to verify.',btn('Sign in','auth-login',true));return;}if(state.user.emailVerified){main.innerHTML=head('Your email is verified.','You’re ready for your next step.')+empty('All set.','Continue creating your profile or finding work.',btn('Continue to LocHire','continue-verified',true));return;}main.innerHTML=head('Check your email.','One quick step to confirm your account.')+`<section class="panel email-check"><span class="empty-icon">${icon('mail')}</span><h2>Verify your email address</h2><p class="email-address">${esc(state.user.email)}</p><p>${state.emailReady?'Open the verification email, tap the link and confirm. It brings you back to LocHire. Check your spam folder if it isn’t in your inbox.':'Email sending is awaiting activation. Your account has been created and saved; verification emails will be available once sending is connected.'}</p>${verificationMessage?`<p class="form-status" role="status">${esc(verificationMessage)}</p>`:''}<div class="row-actions">${btn('Resend verification email','verify-email',true,state.emailReady?'':'disabled')}${state.emailReady?btn('I’ve verified — continue','check-verification'):btn('Continue to my profile','profile')}</div><p class="caption">Links expire after one hour. Need another account? ${btn('Sign out','logout')}</p></section>`;}
 function emailVerifiedPage(){main.innerHTML=head('Email verified.','Thanks for confirming your account.')+empty('You’re ready to continue.',state.user?.id===verifiedLinkUser?'Your next step is waiting.':'Sign in to the account you just verified.',btn(state.user?.id===verifiedLinkUser?'Continue to LocHire':'Sign in',state.user?.id===verifiedLinkUser?'continue-verified':'auth-login',true));}
@@ -203,7 +338,7 @@ function verifyPage(){main.innerHTML=head('Verify your email.','Confirm the emai
 async function selectRole(next){if(state.user){await api('wallet/role',{role:next});stateEpoch++;state.user.activeRole=next;}if(role!==next)clearDiscoveryFilters();role=next;localStorage.setItem('lochire-role',role);if(dialog.open)dialog.close();navigation();}
 function locate(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(Error('Location is unavailable on this device.'));navigator.geolocation.getCurrentPosition(p=>resolve({lat:p.coords.latitude,lon:p.coords.longitude,accuracy:p.coords.accuracy,at:Date.now()}),e=>reject(Error(e.code===1?'Location permission declined. Search by city instead.':'Could not get your location. Try again or search by area.')),{enableHighAccuracy:true,timeout:10000,maximumAge:30000});});}
 document.addEventListener('click',async event=>{const b=event.target.closest('button');if(!b)return;if(b.dataset.page){if(b.dataset.page==='role-menu'){if(dialog.open)dialog.close();document.querySelector('#role-button').click();}else if(b.dataset.page.startsWith('person/'))go('person',b.dataset.page.slice(7));else go(b.dataset.page);return;}const action=b.dataset.action,id=b.dataset.id;if(!action)return;try{
-  if(action==='close'){dialog.close();return;}if(action==='menu'){mainMenu();return;}if(action.startsWith('theme-')){window.LocHireTheme?.set(action.slice(6));return;}if(action==='home'){go('home');return;}if(action==='role'){modal('One account. Two ways to use LocHire.','Choose how you want to use LocHire.',`<div class="modal-menu">${btn('Find work','role-worker',true)}${btn('Hire someone','role-employer',true)}</div>`);return;}if(action.startsWith('auth-')){auth(action.slice(5));return;}b.disabled=true;
+  if(action==='close'){dialog.close();return;}if(action==='menu'){mainMenu();return;}if(action.startsWith('theme-')){window.LocHireTheme?.set(action.slice(6));return;}if(action==='home'){go('home');return;}if(action==='role'){modal('One account. Two ways to use LocHire.','Choose how you want to use LocHire.',`<div class="modal-menu">${btn('Find work','role-worker',true)}${btn('Hire someone','role-employer',true)}</div>`);return;}if(action.startsWith('auth-')){auth(action.slice(5));return;}if(action==='toggle-password'){const input=b.closest('.auth-password-wrap')?.querySelector('input');if(input){const visible=input.type==='password';input.type=visible?'text':'password';b.textContent=visible?'Hide':'Show';b.setAttribute('aria-label',visible?'Hide password':'Show password');b.setAttribute('aria-pressed',String(visible));}return;}b.disabled=true;
   if(action==='role-worker'||action==='role-employer'){await selectRole(action==='role-worker'?'worker':'employer');render();}
   else if(action==='find-work'||action==='hire'){await selectRole(action==='hire'?'employer':'worker');go('discover');}
   else if(action==='category'){await selectRole('employer');category=b.dataset.value;go('discover');}
@@ -257,6 +392,13 @@ document.addEventListener('input',event=>{const e=event.target;if(e.id==='discov
 document.addEventListener('change',event=>{const e=event.target;if(e.form?.id==='terms-form'&&e.name==='start')e.form.elements.completionDate.min=e.value;if(e.name==='search-category')category=e.value;if(e.name==='search-rating')minimum=e.value;if(e.name==='search-sort')sort=e.value;if(e.name==='search-radius'){radius=e.value;if(radius&&!locationPoint)toast('Use my location for distance filters.');}if(e.name.startsWith('search-'))renderDiscovery();if(e.name==='type'&&e.form?.id==='opening-form'){document.querySelector('[data-work-fields="ongoing"]').hidden=e.value==='One-off task';document.querySelector('[data-work-fields="task"]').hidden=e.value!=='One-off task';}if(e.name==='openingId'&&e.form?.id==='invite-form'){const fields=e.form.querySelector('[data-booking-fields]');fields.hidden=!!e.value;fields.querySelectorAll('input,textarea').forEach(x=>x.disabled=!!e.value);}});
 document.addEventListener('submit',async event=>{const f=event.target;event.preventDefault();if(f.dataset.submitting==='true')return;f.dataset.submitting='true';const fd=new FormData(f),d=Object.fromEntries(fd),submit=f.querySelector('[type="submit"]');if(submit)submit.disabled=true;try{if(f.querySelector('.photo-picker[data-processing]'))throw Error('Please wait while your photo is being made smaller.');if(f.querySelector('.photo-picker[data-error]'))throw Error('Choose another photo or remove it before continuing.');
   if(f.id==='auth-form'){if(authMode==='forgot'){const r=await api('auth/forgot',{email:d.email});const status=f.querySelector('#auth-status');status.hidden=false;status.textContent=r.message;return;}if(authMode==='register'&&(!D.isAdult(d.dateOfBirth)||!fd.has('adultConsent')))throw Error('You must be 18 or older. Enter your real date of birth and confirm your age.');if(authMode==='register'&&!fd.has('termsConsent'))throw Error('Agree to the terms and privacy notice first.');authTransition=true;authEpoch++;stateEpoch++;let r;try{r=await api('auth/'+authMode,{...d,role:'both',activeRole:role,adultConsent:fd.has('adultConsent'),termsConsent:fd.has('termsConsent')});adoptState(r,authMode==='login'&&!pending);if(pending&&state.user.activeRole!==role){await api('wallet/role',{role});state.user.activeRole=role;}clearDiscoveryFilters();}finally{authTransition=false;}dialog.close();const next=pending;pending=null;if(state.verificationRequired){verificationNext=next;verificationMessage=r.verificationEmail?.message||'Open your verification email or request a new one below.';go('check-email');}else if(next)next();else go('profile');toast(authMode==='register'?'Account created.':'Signed in.');}
+  else if(f.id==='google-register-form'){
+    if(!googleSignupToken)throw Error('Choose your Google account again to continue.');
+    if(!D.isAdult(d.dateOfBirth)||!fd.has('adultConsent'))throw Error('You must be at least 18 years old.');
+    if(!fd.has('termsConsent'))throw Error('Agree to the terms and privacy notice.');
+    const result=await api('auth/google',{credential:googleSignupToken,profile:{...d,activeRole:role,adultConsent:true,termsConsent:true}});
+    await finishGoogleLogin(result);
+  }
   else if(f.id==='premium-purchase-form'){const identity=authEpoch,r=await api('payments/premium/checkout',{requestId:f.dataset.request,tier:f.dataset.tier,amount:Number(f.dataset.amount),consent:fd.has('consent'),alertsConsent:fd.has('alertsConsent')});if(identity!==authEpoch)return;if(!checkoutRedirect(r)){await refresh(false);dialog.close();go('premium');}}
   else if(f.id==='job-alerts-form'){await api('payments/premium/alerts',{city:d.city,area:d.area,category:d.category,enabled:fd.has('enabled')});await refresh(false);render();toast('Job alert preferences saved.');}
   else if(f.id==='account-photo-form'){await api('auth/photo',{photo:d.photo||null});await refresh(false);render();toast('Profile photo saved for both profiles.');}

@@ -7,6 +7,11 @@ export const users = sqliteTable('users', {
   passwordHash: text('password_hash').notNull(), passwordSalt: text('password_salt').notNull(),
   createdAt: text('created_at').notNull(),
 });
+export const googleIdentities = sqliteTable('google_identities', {
+  googleSub: text('google_sub').primaryKey(),
+  userId: text('user_id').notNull().unique().references(() => users.id),
+  linkedAt: text('linked_at').notNull(),
+});
 export const sessions = sqliteTable('sessions', {
   hash: text('hash').primaryKey(), userId: text('user_id').notNull().references(() => users.id),
   expiresAt: integer('expires_at').notNull(),

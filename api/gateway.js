@@ -64,6 +64,9 @@ module.exports = async function handler(req,res) {
     const paystackKey=process.env.PAYSTACK_SECRET_KEY;
     const paystackRoute=paystackWebhook||url.pathname.startsWith('/api/payments/premium/')||url.pathname.startsWith('/api/hiring/')||['/api/config','/api/auth/login','/api/auth/register','/api/wallet/role'].includes(url.pathname);
     if(paystackRoute&&typeof paystackKey==='string'&&/^sk_(live|test)_/.test(paystackKey))headers['x-lochire-paystack-key']=paystackKey;
+    // Public OAuth client ID is set on the gateway, not supplied by the browser.
+    const googleId=process.env.GOOGLE_CLIENT_ID;
+    if((url.pathname==='/api/config'||url.pathname==='/api/auth/google'||url.pathname==='/api/auth/google/link')&&typeof googleId==='string'&&googleId.endsWith('.apps.googleusercontent.com'))headers['x-lochire-google-client-id']=googleId;
     const sessionCookie=req.headers.cookie?.match(/(?:^|;\s*)(lh_session=[^;]+)/)?.[1];
     if(sessionCookie)headers.cookie=sessionCookie;
     // Vercel sets the forwarded address. Do not trust an arbitrary browser ID.
