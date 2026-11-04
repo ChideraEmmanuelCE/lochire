@@ -6,7 +6,8 @@ import {premiumAccess,queueNearbyJobAlerts} from '../lib/premium.mjs';
 import {deliverWorkEmails} from '../lib/work-email.mjs';
 
 async function fixture(){
- const h=harness();delete h.env.PAYMENTS_PRODUCT;h.opening.max=200000; // Premium scenarios exceed the ₦150,000 boundary.
+ const h=harness();delete h.env.PAYMENTS_PRODUCT;
+ h.opening.max=149000;
  const people=await h.setup();
  Object.assign(h.env,{PAYSTACK_MODE:'test',PAYSTACK_PREMIUM_ENABLED:'true',PAYSTACK_SECRET_KEY:'sk_test_premium_fixture',PAYSTACK_PREMIUM_TEST_USERS:people.w.id});
  return {...h,...people};
@@ -32,16 +33,16 @@ test('the default product exposes locked previews without private job fields and
  const gid=await h.invite(h.e,h.w,h.oid);assert.equal((await h.action(h.w,gid,'accept')).status,200);assert.equal((await h.call('hiring/state',undefined,h.w)).data.openings[0].locked,false);
 });
 
-test('budget boundary: ₦150,000 jobs are free to view and contact; ₦150,001 jobs require Premium',async()=>{
+test('budget boundary: ₦148,999 jobs are free to view and contact; ₦149,000 jobs require Premium',async()=>{
   const h=await fixture();
-  for(const max of [150000,150001]){
+  for(const max of [148999,149000]){
     const post={...h.opening,requestId:crypto.randomUUID(),title:'Boundary '+max,min:10000,max};
     const saved=await h.call('hiring/openings',post,h.e);assert.equal(saved.status,200,JSON.stringify(saved.data));
     const anonymous=await h.call('hiring/state');const job=anonymous.data.openings.find(o=>o.title===post.title);
-    assert.equal(job.premium,max>150000);assert.equal(job.locked,max>150000);
-    assert.equal('description' in job,max<=150000);
+    assert.equal(job.premium,max>=149000);assert.equal(job.locked,max>=149000);
+    assert.equal('description' in job,max<149000);
     const worker=await h.call('hiring/engagements',{role:'worker',openingId:job.id,message:'Available to help with this job.'},h.w);
-    assert.equal(worker.status,max<=150000?200:403,JSON.stringify(worker.data));
+    assert.equal(worker.status,max<149000?200:403,JSON.stringify(worker.data));
   }
 });
 
@@ -180,7 +181,7 @@ test('Plus emails have a readable job summary, preference link and independent o
  global.fetch=async(url,opts)=>{mails.push({body:JSON.parse(opts.body),key:opts.headers['Idempotency-Key']});return fail?Response.json({error:'temporary'},{status:503}):Response.json({id:'mail-fixture'});};
  try{
   await queueNearbyJobAlerts(h.db,h.oid);await deliverWorkEmails(h.db,h.env);assert.equal(mails.length,1,'Plus opt-in is independent of invitation opt-out');
-  const mail=mails[0].body;assert.deepEqual(mail.to,['artisan@example.test']);assert.match(mail.subject,/New nearby job: Repair kitchen pipe/);assert.match(mail.text,/₦15,000 – ₦200,000 per task/);assert.match(mail.text,/Location: Jericho, Ibadan/);assert.match(mail.text,/Job date: /);assert.match(mail.text,/manage_job_alerts=1#premium/);assert.match(mail.html,/role="presentation"/);assert.match(mail.html,/max-width:560px/);assert.match(mail.html,/View job &amp; express interest/);assert.match(mail.html,/Manage or turn off nearby job emails/);assert.doesNotMatch(JSON.stringify(mail),/OY-PRIVATE|08012345678|sk_test|re_fixture/);
+  const mail=mails[0].body;assert.deepEqual(mail.to,['artisan@example.test']);assert.match(mail.subject,/New nearby job: Repair kitchen pipe/);assert.match(mail.text,/₦15,000 – ₦149,000 per task/);assert.match(mail.text,/Location: Jericho, Ibadan/);assert.match(mail.text,/Job date: /);assert.match(mail.text,/manage_job_alerts=1#premium/);assert.match(mail.html,/role="presentation"/);assert.match(mail.html,/max-width:560px/);assert.match(mail.html,/View job &amp; express interest/);assert.match(mail.html,/Manage or turn off nearby job emails/);assert.doesNotMatch(JSON.stringify(mail),/OY-PRIVATE|08012345678|sk_test|re_fixture/);
   const row=await h.db.prepare('SELECT * FROM live_notification_emails WHERE notification_id LIKE ?').bind('JOB-%').first();assert.equal(row.status,'pending');
   const opening=await h.db.prepare('SELECT data FROM live_openings WHERE id=?').bind(h.oid).first();await h.db.prepare('UPDATE live_openings SET data=? WHERE id=?').bind(JSON.stringify({...JSON.parse(opening.data),title:'Changed after first attempt'}),h.oid).run();
   fail=false;await deliverWorkEmails(h.db,h.env,{now:row.next_at});assert.equal(mails.length,2);assert.deepEqual(mails[1],mails[0],'retry body and provider idempotency key remain unchanged');
@@ -198,5 +199,19 @@ test('queued job emails are suppressed after opt-out, expiry, a closed job or a 
    if(reason==='blocked')await h.db.prepare('INSERT INTO live_blocks(actor,target) VALUES(?,?)').bind(h.w.profile,h.e.profile).run();
    await deliverWorkEmails(h.db,h.env);assert.equal(sent,0,reason);assert.equal((await h.db.prepare('SELECT status FROM live_notification_emails WHERE notification_id=?').bind(row.notification_id).first()).status,'skipped',reason);
   }finally{global.fetch=old;}
+ }
+});
+
+test('current saved budget controls free applications and locks at the inclusive cutoff',async()=>{
+ const h=await fixture();
+ for(const max of [0,148999.99,149000,200000]){
+   const current=(await h.call('hiring/state',undefined,h.e)).data.openings.find(o=>o.id===h.oid);
+   const saved=await h.call('hiring/openings/'+h.oid,{...h.opening,min:0,max,revision:current.revision},h.e);
+   assert.equal(saved.status,200,JSON.stringify(saved.data));
+   const o=(await h.call('hiring/state')).data.openings.find(o=>o.id===h.oid);
+   assert.equal(o.premium,max>=149000);
+   assert.equal(o.locked,max>=149000);
+   const result=await h.call('hiring/engagements',{role:'worker',openingId:h.oid,message:'I am interested.'},h.w);
+   assert.equal(result.status,max>=149000?403:200);
  }
 });

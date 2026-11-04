@@ -1,3 +1,4 @@
+import {directoryCounts} from './admin-overview.mjs';
 import {paystackRequestEnvironment} from './premium-paystack.mjs';
 import {validateProfilePhoto} from './profile-photo.mjs';
 import {verifyGoogleIdToken, GoogleIdentityError} from './google-identity.mjs';
@@ -347,7 +348,12 @@ async function routeRequest(request,env) {
     env=paystackRequestEnvironment(env,request);
     const path=new URL(request.url).pathname.replace(/^\/api\//,'').replace(/\/$/,'');
     const db=env.DB;if(!db)fail(503,'Payment database is unavailable.');
-    if(request.method==='GET'&&path==='health'){await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:live(env)?paymentReadiness(env).status:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
+    if(request.method==='GET'&&path==='health'){
+      if(new URL(request.url).searchParams.get('check')==='worker-directory') {
+        // Only aggregate results go to the private operator log.
+        console.info('LocHire directory audit '+JSON.stringify(await directoryCounts(db)));
+      }
+      await first(db,'SELECT COUNT(*) AS total FROM wallets');return send({ok:true,storage:'persistent',ledger:live(env)?'disabled_test_ledger':'sandbox',hiring:live(env)?'live':'demo',bank:live(env)?paymentReadiness(env).status:bankReadiness(env).ready?'configured':'awaiting_credentials'});}
     if(live(env)&&env.PAYMENTS_PRODUCT!=='legacy'&&path.startsWith('webhooks/wema/'))fail(410,'This payment integration has been retired.');
     if(request.method==='GET'&&path==='config'&&live(env)&&env.PAYMENTS_PRODUCT!=='legacy')return send({googleClientId:googleClientId(env,request)||null,mode:'live',currency:'NGN',storage:'persistent',payments:premiumReadiness(koraRequestEnvironment(env,request),null),features:{accounts:true,realHiring:true,bankDeposits:false,salaryPayments:false,walletFunding:false,premiumAccess:true,nearbyJobAlerts:true,emailDelivery:emailReady(env)}});
     if(request.method==='GET'&&path==='config'&&live(env))return send({googleClientId:googleClientId(env,request)||null,mode:'live',currency:'NGN',storage:'persistent',payments:paymentReadiness(env),features:{accounts:true,realHiring:true,reservedPayments:false,bankDeposits:false,onlinePayments:paymentReadiness(env).ready,emailDelivery:emailReady(env),hiringEmailDelivery:emailReady(env)}});

@@ -53,14 +53,14 @@ function profileData(body,user,role){
 }
 function openingData(body,employer){
   const o={title:text(body.title,'title',100),description:text(body.description,'work description'),category:choose(body.category,categories,'category'),type:choose(body.type,types,'work type'),city:text(body.city,'city',70),area:text(body.area,'area',90),quote:body.quote===true,min:number(body.min||0,'minimum budget'),max:number(body.max||0,'maximum budget'),basis:choose(body.basis,bases,'payment basis'),skills:array(body.skills||[],'skills'),years:number(body.years||0,'experience',60),days:array(body.days||[],'working days'),hoursStart:optional(body.hoursStart,'start time',5),hoursEnd:optional(body.hoursEnd,'end time',5),start:date(body.start||body.date,'start date'),date:body.date?date(body.date,'preferred date'):'',duration:optional(body.duration,'duration',100),materials:optional(body.materials,'materials',300),accommodation:choose(body.accommodation||'Not applicable',['Live-in','Live-out','Either','Not applicable'],'accommodation'),employerId:employer.id,status:'Open',photos:[],demo:false};
-  if(o.start<today()||(!o.quote&&(o.max<=0||o.min>o.max)))fail(400,'Use a future start date and a valid budget.');
+  if(o.start<today()||(!o.quote&&o.min>o.max))fail(400,'Use a future start date and a valid budget.');
   if(o.type==='One-off task'&&(!o.date||o.date<today()||!o.duration))fail(400,'Add a preferred date and duration.');
   if(o.type==='Ongoing job'&&(!o.days.length||o.days.some(d=>!days.includes(d))||!o.skills.length||time(o.hoursEnd)<=time(o.hoursStart)))fail(400,'Add required skills, working days and valid hours.');
   if(body.postcode){const code=text(body.postcode,'postcode',30).toUpperCase();if(!/^[A-Z0-9 -]+$/.test(code))fail(400,'Invalid postcode.');o.postcode=code;}
   return o;
 }
+export const isPremiumOpening=o=>Math.max(Number(o.min)||0,Number(o.max)||0)>=149000;
 const publicOpening=o=>{const {postcode,...safe}=o;return safe;};
-export const isPremiumOpening=o=>Number(o.max||0)>150000||Number(o.min||0)>150000;
 function distance(a,b){const rad=v=>v*Math.PI/180,h=Math.sin(rad(b.lat-a.lat)/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(rad(b.lon-a.lon)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(Math.max(0,1-h)));}
 
 export async function hiringState(db,user,env,request){
@@ -85,7 +85,7 @@ export async function hiringState(db,user,env,request){
     const o=publicOpening({...decoded(r),status:r.status});
     const premium=isPremiumOpening(o);
     if(!premium||env.PAYMENTS_PRODUCT==='legacy'||r.owner_user===user?.id||access.active||participantOpenings.has(r.id))return {...o,premium,locked:false};
-    return {id:o.id,title:o.title,type:o.type,category:o.category,city:o.city,area:o.area,min:o.min,max:o.max,quote:o.quote,basis:o.basis,status:o.status,premium:true,locked:true};
+    return {id:o.id,title:o.title,type:o.type,category:o.category,city:o.city,area:o.area,min:o.min,max:o.max,quote:o.quote,basis:o.basis,status:o.status,premium,locked:true};
   });
   let engagements=user?(await all(db,'SELECT g.* FROM live_engagements g WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) ORDER BY created_at DESC LIMIT 250',user.id,user.id)).map(decoded):[];
   engagements=engagements.map(g=>{if(['Pending','Declined'].includes(g.status)&&!ownRows.some(p=>p.id===g.employerId)){const {postcode,...safe}=g;return safe;}return g;});
@@ -126,8 +126,7 @@ export async function hiringAction({db,user,env,request,body,path}){
     const employer=await ownProfile(db,user,'employer');
     if(parts[2]){
       const row=await first(db,'SELECT * FROM live_openings WHERE id=? AND employer_id=?',parts[2],employer.id);if(!row)fail(404,'Opening not found.');
-      if(action==='viewed'){if(!Array.isArray(body.messageIds)||body.messageIds.length>100||body.messageIds.some(v=>typeof v!=='string'||v.length>100))fail(400,'Choose valid messages.');const views=await markMessagesViewed(db,g,user,actor,body.messageIds);return {ok:true,views:views.map(v=>({id:v.message_id,viewedAt:new Date(v.viewed_at).toISOString(),expiresAt:new Date(v.expires_at).toISOString()}))};}
-    if(body.revision!==row.revision)fail(409,'This opening changed. Refresh before saving.');
+      if(body.revision!==row.revision)fail(409,'This opening changed. Refresh before saving.');
       const o=body.action==='status'?{...decoded(row),status:choose(body.status,['Open','Closed'],'status')}:{...openingData(body,employer),id:row.id,status:row.status};
       const r=await run(db,'UPDATE live_openings SET data=?,status=?,revision=revision+1 WHERE id=? AND revision=?',JSON.stringify(o),o.status,row.id,row.revision);if(r.meta?.changes===0)fail(409,'This opening changed. Refresh and try again.');
     }else {const o=openingData(body,employer),oid=body.requestId?'OPN-'+text(body.requestId,'request reference',100):id('OPN');o.id=oid;const prior=await first(db,'SELECT * FROM live_openings WHERE id=?',oid);if(prior){if(prior.employer_id!==employer.id||prior.data!==JSON.stringify(o))fail(409,'Request reference already used.');return hiringState(db,user,env,request);}await run(db,'INSERT INTO live_openings (id,employer_id,status,data,revision,created_at) VALUES (?,?,\'Open\',?,1,?)',oid,employer.id,JSON.stringify(o),now());}
@@ -147,7 +146,7 @@ export async function hiringAction({db,user,env,request,body,path}){
       await run(db,"INSERT OR IGNORE INTO live_openings (id,employer_id,status,data,revision,created_at) VALUES (?,?,'Open',?,1,?)",oid,mine.id,openingRow.data,now());const saved=await first(db,'SELECT employer_id,data FROM live_openings WHERE id=?',oid);if(saved.employer_id!==mine.id||saved.data!==openingRow.data)fail(409,'Request reference already used.');
     }else openingRow=await first(db,'SELECT * FROM live_openings WHERE id=?',text(body.openingId,'opening ID',100));
     if(!openingRow||openingRow.status!=='Open')fail(409,'This opening is unavailable.');
-    if(role==='worker'&&env.PAYMENTS_PRODUCT!=='legacy'&&isPremiumOpening(decoded(openingRow))&&!(await premiumAccess(db,user,env)).active)fail(403,'This job is above ₦150,000 and requires Premium to apply. Jobs up to ₦150,000 are free.');
+    if(role==='worker'&&env.PAYMENTS_PRODUCT!=='legacy'&&isPremiumOpening(decoded(openingRow))&&!(await premiumAccess(db,user,env)).active)fail(403,'Premium is required to apply to this job.');
     const w=role==='worker'?mine:await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='worker' AND published=1 AND suspended=0",body.workerId);
     const e=await first(db,"SELECT * FROM available_live_profiles WHERE id=? AND role='employer' AND published=1 AND suspended=0",openingRow.employer_id);
     if(!w||!e||w.user_id===e.user_id||role==='employer'&&mine.id!==e.id)fail(403,'Choose an available worker and your own opening.');
