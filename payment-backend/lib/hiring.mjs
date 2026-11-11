@@ -59,7 +59,7 @@ function openingData(body,employer){
   if(body.postcode){const code=text(body.postcode,'postcode',30).toUpperCase();if(!/^[A-Z0-9 -]+$/.test(code))fail(400,'Invalid postcode.');o.postcode=code;}
   return o;
 }
-export const isPremiumOpening=o=>Math.max(Number(o.min)||0,Number(o.max)||0)>=149000;
+export const isPremiumOpening=o=>Math.max(Number(o.min)||0,Number(o.max)||0)>150000;
 const publicOpening=o=>{const {postcode,...safe}=o;return safe;};
 function distance(a,b){const rad=v=>v*Math.PI/180,h=Math.sin(rad(b.lat-a.lat)/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(rad(b.lon-a.lon)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(Math.max(0,1-h)));}
 
@@ -73,12 +73,17 @@ export async function hiringState(db,user,env,request){
   const blockedProfiles=new Set(blocks.flatMap(b=>[b.actor,b.target]).filter(pid=>!ownRows.some(p=>p.id===pid)));
   const canHire=ownRows.some(r=>r.role==='employer'&&r.published&&!r.suspended);
   const presence=canHire?new Map((await all(db,'SELECT user_id,last_seen_at FROM live_presence WHERE last_seen_at>?',Date.now()-7*86400000)).map(r=>[r.user_id,r.last_seen_at])):null;
-  const published=rows.filter(r=>!blockedProfiles.has(r.id)).map(r=>{
-    const p=decoded(r),safe=publicProfile(p);
+  const published=await Promise.all(rows.filter(r=>!blockedProfiles.has(r.id)).map(async r=>{
+    const p=decoded(r);
+    // The account photo is the canonical public thumbnail. Prefer the joined value,
+    // and fall back to a direct lookup if profile JSON contains a stale/invalid photo
+    // or the available-profile view omits the joined alias.
+    if(r.role==='worker'&&(!p.photo||typeof p.photo!=='string'||p.photo.length>=5000||!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p.photo)))p.photo=r.account_photo||await getAccountPhoto(db,r.user_id);
+    const safe=publicProfile(p);
     if(canHire&&r.role==='worker'){const seen=presence.get(r.user_id);safe.activity={activeNow:!!seen&&Date.now()-seen<90000,lastActiveAt:seen?new Date(seen).toISOString():null};}
     if(searchPoint&&p.coordinates&&Date.now()-p.coordinates.at<86400000)safe.distance={metres:Math.round(distance(searchPoint,p.coordinates)/100)*100,accuracy:Math.ceil(p.coordinates.accuracy/100)*100};
     return safe;
-  });
+  }));
   const access=await premiumAccess(db,user,env);
   const participantOpenings=new Set(user?(await all(db,'SELECT opening_id FROM live_engagements WHERE worker_id IN (SELECT id FROM available_live_profiles WHERE user_id=?) OR employer_id IN (SELECT id FROM available_live_profiles WHERE user_id=?)',user.id,user.id)).map(r=>r.opening_id):[]);
   const openings=(await all(db,"SELECT o.*,p.user_id AS owner_user FROM live_openings o JOIN available_live_profiles p ON p.id=o.employer_id WHERE o.status='Open' AND p.published=1 AND p.suspended=0 ORDER BY o.created_at DESC")).filter(r=>!blockedProfiles.has(r.employer_id)).map(r=>{
