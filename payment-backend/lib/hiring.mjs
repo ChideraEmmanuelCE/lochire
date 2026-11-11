@@ -78,7 +78,7 @@ export async function hiringState(db,user,env,request){
     // The account photo is the canonical public thumbnail. Prefer the joined value,
     // and fall back to a direct lookup if profile JSON contains a stale/invalid photo
     // or the available-profile view omits the joined alias.
-    if(r.role==='worker'&&(!p.photo||typeof p.photo!=='string'||p.photo.length>=5000||!/^data:image\\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p.photo)))p.photo=r.account_photo||await getAccountPhoto(db,r.user_id);
+    if(r.role==='worker'&&(!p.photo||typeof p.photo!=='string'||p.photo.length>=5000||!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p.photo)))p.photo=r.account_photo||await getAccountPhoto(db,r.user_id);
     const safe=publicProfile(p);
     if(canHire&&r.role==='worker'){const seen=presence.get(r.user_id);safe.activity={activeNow:!!seen&&Date.now()-seen<90000,lastActiveAt:seen?new Date(seen).toISOString():null};}
     if(searchPoint&&p.coordinates&&Date.now()-p.coordinates.at<86400000)safe.distance={metres:Math.round(distance(searchPoint,p.coordinates)/100)*100,accuracy:Math.ceil(p.coordinates.accuracy/100)*100};
