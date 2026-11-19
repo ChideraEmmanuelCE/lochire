@@ -138,3 +138,28 @@ dialog.auth-dialog::backdrop {background:#071b1699;backdrop-filter:blur(8px)}
 @media(prefers-reduced-motion:reduce){
   .auth-form .field input,.auth-submit{transition:none}
 }
+
+/* Keep the authentication shell bounded and make the form column the scroll container
+   at every viewport size. The dialog's direct content wrapper must also have a real
+   height so percentage heights resolve instead of expanding with the form. */
+dialog.auth-dialog>#dialog-content{
+  height:100%;
+  min-height:0;
+  overflow:hidden;
+}
+dialog.auth-dialog .auth-layout{
+  height:100%;
+  min-height:0;
+  min-width:0;
+}
+dialog.auth-dialog .auth-pane{
+  height:100%;
+  min-height:0;
+  min-width:0;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior-y:contain;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-y;
+  scrollbar-width:thin;
+}
